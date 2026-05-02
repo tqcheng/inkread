@@ -1,10 +1,18 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.database import init_db
 from app.middleware.admin_auth import AdminAuthMiddleware
 from app.routers import admin, books, chapters, scan, settings, ai
 
-app = FastAPI(title="TXT Reader API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+
+app = FastAPI(title="TXT Reader API", lifespan=lifespan)
 
 # CORS middleware
 app.add_middleware(
