@@ -5,6 +5,7 @@ import { useScanSummary, useScanStatus, useTriggerScanMutation } from '../hooks/
 import { adminApi } from '../api/admin';
 import { useAdminStore } from '../hooks/useAdmin';
 import { useQueryClient } from '@tanstack/react-query';
+import { BOOKS_QUERY_KEY } from '../hooks/useBooks';
 
 const ADMIN_KEY = 'changeme';
 
@@ -76,6 +77,13 @@ export default function Admin() {
       refetchSummary();
     }
   }, [currentStatus, summary, refetchSummary]);
+
+  // Invalidate books list when scan completes, so homepage refreshes
+  useEffect(() => {
+    if (currentStatus?.status === 'completed' || currentStatus?.status === 'failed') {
+      queryClient.invalidateQueries({ queryKey: BOOKS_QUERY_KEY });
+    }
+  }, [currentStatus?.status, queryClient]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
