@@ -66,7 +66,7 @@ async def init_fts_tables(engine) -> None:
         await conn.execute(
             text("""
             CREATE TRIGGER IF NOT EXISTS books_ad AFTER DELETE ON books BEGIN
-                INSERT INTO books_fts(books_fts, rowid, title) VALUES('delete', old.id, old.title);
+                DELETE FROM books_fts WHERE rowid = old.id;
             END;
         """)
         )
@@ -74,7 +74,7 @@ async def init_fts_tables(engine) -> None:
         await conn.execute(
             text("""
             CREATE TRIGGER IF NOT EXISTS books_au AFTER UPDATE ON books BEGIN
-                INSERT INTO books_fts(books_fts, rowid, title) VALUES('delete', old.id, old.title);
+                DELETE FROM books_fts WHERE rowid = old.id;
                 INSERT INTO books_fts(rowid, title) VALUES (new.id, new.title);
             END;
         """)
