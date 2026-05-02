@@ -1,0 +1,58 @@
+version: "3.8"
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "32206:32206"
+    volumes:
+      - ./books:/books
+      - backend_data:/data
+    environment:
+      - LIBRARY_PATH=/books
+      - DATABASE_URL=sqlite+aiosqlite:///data/txt_reader.db
+      - AI_PROVIDER=${AI_PROVIDER:-disabled}
+      - OLLAMA_HOST=http://ollama:11434
+    env_file:
+      - .env
+    networks:
+      - txt-reader-network
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "31206:31206"
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_URL=http://localhost:32206
+    networks:
+      - txt-reader-network
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles:
+      - ai
+    ports:
+      - "30114:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - txt-reader-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  backend_data:
+  ollama_data:
+
+networks:
+  txt-reader-network:
+    driver: bridge

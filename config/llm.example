@@ -1,0 +1,12 @@
+# Admin Key - CHANGE THIS IN PRODUCTION
+ADMIN_KEY=your_secure_admin_key_here
+
+# AI Provider (disabled, ollama, openai)
+AI_PROVIDER=disabled
+
+# Ollama (if AI_PROVIDER=ollama)
+OLLAMA_MODEL=qwen2.5:7b
+OLLAMA_HOST=http://ollama:11434
+
+# OpenAI (if AI_PROVIDER=openai)
+# OPENAI_API_KEY=sk-your-api-key-here

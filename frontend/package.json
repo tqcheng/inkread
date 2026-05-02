@@ -1,0 +1,39 @@
+{
+  "name": "txt-reader-web",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5173",
+    "build": "tsc && vite build",
+    "preview": "vite preview --port 31206 --host",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.17.0",
+    "axios": "^1.6.5",
+    "clsx": "^2.1.0",
+    "lucide-react": "^0.312.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^7.14.1",
+    "tailwind-merge": "^2.2.0",
+    "zustand": "^4.5.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^25.6.0",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.17",
+    "jsdom": "^29.0.2",
+    "msw": "^2.13.4",
+    "postcss": "^8.4.33",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3",
+    "vite": "^8.0.8",
+    "vitest": "^4.1.4"
+  }
+}

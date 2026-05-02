@@ -1,0 +1,32 @@
+# FastAPI and Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Database
+sqlalchemy[asyncio]>=2.0.0
+aiosqlite>=0.19.0
+
+# Configuration
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# AI Integration (optional, based on provider)
+# For Ollama
+ollama>=0.1.0
+# For OpenAI
+openai>=1.0.0
+
+# Utilities
+python-multipart>=0.0.6
+aiofiles>=23.2.0
+chardet>=5.2.0
+python-magic>=0.4.27; sys_platform != "win32"
+python-magic-bin>=0.4.14; sys_platform == "win32"
+
+# Async utilities
+tenacity>=8.2.0
+
+# Development and Testing (optional)
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+httpx>=0.25.0
