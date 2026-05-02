@@ -57,9 +57,10 @@ export default function Reader() {
   const { readingMode } = useReaderSettings();
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
 
-  // Scroll mode: fetch single chapter by chapter_index
-  const { data: scrollContent } = useBookContentQuery(bookId, 0, 0,
-    readingMode === 'scroll' ? currentChapterIndex : undefined
+  // Scroll mode: fetch single chapter by chapter_index (when chapters exist), else fetch all
+  const { data: scrollContent } = useBookContentQuery(
+    bookId, 0, 200000,
+    readingMode === 'scroll' && book?.chapters?.length ? currentChapterIndex : undefined
   );
   // Page mode: fetch bulk content by offset
   const { data: pageContent } = useBookContentQuery(bookId, 0, 200000,

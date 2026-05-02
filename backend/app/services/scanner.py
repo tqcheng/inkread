@@ -66,20 +66,20 @@ def clean_filename(filename: str) -> str:
     return title if title else filename
 
 
-def extract_chapters(content: str) -> List[Dict[str, Any]]:
+def extract_chapters(file_path: Path) -> List[Dict[str, Any]]:
     """
-    Extract chapter titles and positions from content.
+    Extract chapter titles and byte positions from a file.
 
     Uses regex patterns to identify chapter boundaries.
+    Positions are byte offsets (compatible with file.seek).
 
     Args:
-        content: Full text content of the book
+        file_path: Path to the .txt file
 
     Returns:
         List of chapter dicts with title, position_start, and position_end
     """
     chapters = []
-    lines = content.split("\n")
 
     # Compile regex patterns
     compiled_patterns = [re.compile(p, re.IGNORECASE) for p in CHAPTER_PATTERNS]
@@ -88,33 +88,36 @@ def extract_chapters(content: str) -> List[Dict[str, Any]]:
     current_start = 0
     position = 0
 
-    for i, line in enumerate(lines):
-        line_with_newline = line + "\n"
+    with open(file_path, "rb") as f:
+        for line_bytes in f:
+            # Decode for pattern matching
+            line = line_bytes.decode("utf-8", errors="ignore").strip()
 
-        # Check if this line matches any chapter pattern
-        is_chapter_line = False
-        for pattern in compiled_patterns:
-            if pattern.match(line.strip()):
-                is_chapter_line = True
-                break
+            # Check if this line matches any chapter pattern
+            is_chapter_line = False
+            for pattern in compiled_patterns:
+                if pattern.match(line):
+                    is_chapter_line = True
+                    break
 
-        if is_chapter_line:
-            # Save previous chapter if exists
-            if current_chapter is not None:
-                chapters.append(
-                    {
-                        "title": current_chapter,
-                        "position_start": current_start,
-                        "position_end": position,
-                        "chapter_index": len(chapters),
-                    }
-                )
+            if is_chapter_line:
+                # Save previous chapter if exists
+                if current_chapter is not None:
+                    chapters.append(
+                        {
+                            "title": current_chapter,
+                            "position_start": current_start,
+                            "position_end": position,
+                            "chapter_index": len(chapters),
+                        }
+                    )
 
-            # Start new chapter
-            current_chapter = line.strip()
-            current_start = position
+                # Start new chapter
+                current_chapter = line
+                current_start = position
 
-        position += len(line_with_newline)
+            # Accumulate byte position (not character count)
+            position += len(line_bytes)
 
     # Don't forget the last chapter
     if current_chapter is not None:
@@ -190,18 +193,8 @@ async def scan_single_file(
             else:
                 logger.warning(f"Failed to convert {filename}: {convert_msg}")
 
-        # Read content for chapter extraction
-        try:
-            async with aiofiles.open(
-                file_path, "r", encoding="utf-8", errors="ignore"
-            ) as f:
-                content = await f.read()
-        except Exception as e:
-            logger.error(f"Failed to read file {filename}: {e}")
-            return None, f"read_error_{e}"
-
-        # Extract chapters
-        chapters = extract_chapters(content)
+        # Extract chapters (byte positions)
+        chapters = extract_chapters(file_path)
 
         # Clean filename to get title
         title = clean_filename(filename)
@@ -232,6 +225,13 @@ async def scan_single_file(
 
         # Flush to get book ID
         await db_session.flush()
+
+        # Remove old chapters on update to avoid duplicates
+        if is_update:
+            from sqlalchemy import delete
+            await db_session.execute(
+                delete(Chapter).where(Chapter.book_id == existing_book.id)
+            )
 
         # Create Chapter records
         for chapter_data in chapters:

@@ -60,6 +60,7 @@ class BookResponse(BookBase):
     last_read_position: int = 0
     last_read_chapter: Optional[str] = None
     ai_analyzed_at: Optional[datetime] = None
+    chapters: List["ChapterResponse"] = []
 
 
 class BookList(BaseModel):

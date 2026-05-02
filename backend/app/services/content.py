@@ -53,10 +53,15 @@ async def get_book_content(
         if chapter:
             offset = chapter.position_start
             limit = min(chapter.position_end - chapter.position_start, 200000) if chapter.position_end else 200000
+        else:
+            # Chapter not found, fall back to offset/limit with safe defaults
+            offset = 0
+            limit = 200000
 
-    async with aiofiles.open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+    async with aiofiles.open(file_path, "rb") as f:
         await f.seek(offset)
-        content = await f.read(limit)
+        raw_bytes = await f.read(limit)
+        content = raw_bytes.decode("utf-8", errors="ignore")
 
         current_pos = await f.tell()
 
