@@ -71,4 +71,5 @@ data/
 
 # Superpowers
 .superpowers/
-docs/superpowers/
+docs/superpowers/*
+!docs/superpowers/specs/
