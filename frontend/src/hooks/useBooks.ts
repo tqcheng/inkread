@@ -25,12 +25,13 @@ export function useBookQuery(id: number) {
 
 export const BOOK_CONTENT_QUERY_KEY = 'book-content';
 
-export function useBookContentQuery(id: number, offset: number = 0, limit: number = 50000, chapterIndex?: number) {
+export function useBookContentQuery(id: number, offset: number = 0, limit: number = 50000, chapterIndex?: number, enabled: boolean = true) {
   return useQuery({
     queryKey: [BOOK_CONTENT_QUERY_KEY, id, offset, limit, chapterIndex],
     queryFn: () => booksApi.getBookContent(id, offset, limit, chapterIndex),
     staleTime: 30 * 60 * 1000, // 30 minutes
     gcTime: 60 * 60 * 1000, // 60 minutes
+    enabled,
   });
 }
 

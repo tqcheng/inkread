@@ -62,6 +62,12 @@ export default function Reader() {
     bookId, 0, 200000,
     readingMode === 'scroll' && book?.chapters?.length ? currentChapterIndex : undefined
   );
+  // Pre-chapter content: fetch content before the first chapter when on chapter 0
+  const firstChapterStart = book?.chapters?.[0]?.position_start || 0;
+  const shouldFetchPreContent = readingMode === 'scroll' && currentChapterIndex === 0 && firstChapterStart > 0;
+  const { data: preContent } = useBookContentQuery(
+    bookId, 0, firstChapterStart, undefined, shouldFetchPreContent
+  );
   // Page mode: fetch bulk content by offset
   const { data: pageContent } = useBookContentQuery(bookId, 0, 200000,
     readingMode === 'page' ? undefined : undefined
@@ -85,18 +91,20 @@ export default function Reader() {
   const chapterBlocks = useMemo(() => {
     if (!book) return [];
     if (readingMode === 'scroll') {
+      const pre = currentChapterIndex === 0 ? (preContent?.content || '') : '';
       const content = scrollContent?.content || '';
       const ch = book.chapters?.[currentChapterIndex];
       const title = ch?.title || (book.chapters?.length ? `第 ${currentChapterIndex + 1} 章` : '正文');
+      const fullText = pre + content;
       return [{
         title,
-        startOffset: ch?.position_start || 0,
-        endOffset: (ch?.position_start || 0) + content.length,
-        text: content,
+        startOffset: pre ? 0 : (ch?.position_start || 0),
+        endOffset: pre ? (ch?.position_end || fullText.length) : ((ch?.position_start || 0) + content.length),
+        text: fullText,
       }];
     }
     return sliceChapters(pageContent?.content || '', book.chapters || []);
-  }, [readingMode, scrollContent?.content, pageContent?.content, book, currentChapterIndex]);
+  }, [readingMode, scrollContent?.content, preContent?.content, pageContent?.content, book, currentChapterIndex]);
 
   const displayChapterNum = useMemo(() => {
     if (readingMode !== 'scroll' || !book?.chapters?.length) return null;
@@ -135,9 +143,8 @@ export default function Reader() {
         ? Math.min(progress / 100, 1)
         : 0;
       const scrollOffset = Math.round(chapterTextRatio * block.text.length);
-      const ch = book?.chapters?.[currentChapterIndex];
       booksApi.updateProgress(bookId, {
-        position: (ch?.position_start || 0) + scrollOffset,
+        position: block.startOffset + scrollOffset,
         chapter: block.title,
       });
     }, 3000);
@@ -153,7 +160,13 @@ export default function Reader() {
       return;
     }
 
-    if (book?.last_read_position) {
+    if (book?.last_read_position != null) {
+      const firstCh = book.chapters[0];
+      if (firstCh && book.last_read_position < firstCh.position_start) {
+        setCurrentChapterIndex(0);
+        initialRestoreRef.current = false;
+        return;
+      }
       const idx = book.chapters.findIndex(
         (c: Chapter) => book.last_read_position! >= c.position_start &&
           (!c.position_end || book.last_read_position! < c.position_end)
@@ -180,18 +193,15 @@ export default function Reader() {
     const block = chapterBlocks[0];
     if (!block) return;
 
-    if (initialRestoreRef.current && book?.last_read_position && book?.chapters?.length) {
-      const ch = book.chapters[currentChapterIndex];
-      if (ch) {
-        const offsetInChapter = book.last_read_position - ch.position_start;
-        if (offsetInChapter > 0 && block.text.length > 0) {
-          const progress = offsetInChapter / block.text.length;
-          const contentEl = contentColumnRef.current;
-          const contentHeight = contentEl.offsetHeight;
-          const el = scrollContainerRef.current;
-          const targetScroll = contentEl.offsetTop + progress * Math.max(0, contentHeight - el.clientHeight);
-          el.scrollTop = targetScroll;
-        }
+    if (initialRestoreRef.current && book?.last_read_position != null && book?.chapters?.length) {
+      const offsetInBlock = book.last_read_position - block.startOffset;
+      if (offsetInBlock >= 0 && block.text.length > 0) {
+        const progress = offsetInBlock / block.text.length;
+        const contentEl = contentColumnRef.current;
+        const contentHeight = contentEl.offsetHeight;
+        const el = scrollContainerRef.current;
+        const targetScroll = contentEl.offsetTop + progress * Math.max(0, contentHeight - el.clientHeight);
+        el.scrollTop = targetScroll;
       }
       initialRestoreRef.current = false;
     } else {
