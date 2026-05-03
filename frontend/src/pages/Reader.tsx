@@ -18,6 +18,16 @@ interface ChapterBlock {
   text: string;
 }
 
+function byteOffsetToCharIndex(text: string, byteOffset: number): number {
+  const encoder = new TextEncoder();
+  let bytes = 0;
+  for (let i = 0; i < text.length; i++) {
+    bytes += encoder.encode(text[i]).length;
+    if (bytes > byteOffset) return i;
+  }
+  return text.length;
+}
+
 function sliceChapters(content: string, chapters: Chapter[]): ChapterBlock[] {
   if (!chapters || chapters.length === 0) {
     return [{
@@ -83,6 +93,8 @@ export default function Reader() {
   const lastScrollTopRef = useRef<number>(0);
   const [chapterProgress, setChapterProgress] = useState(0);
   const initialRestoreRef = useRef(true);
+  const searchTargetOffsetRef = useRef<number | null>(null);
+  const [highlightQuery, setHighlightQuery] = useState<string | null>(null);
 
   const { token, isEnabled, isLoading: authLoading, checkStatus } = useAuth();
 
@@ -201,19 +213,29 @@ export default function Reader() {
     const block = chapterBlocks[0];
     if (!block) return;
 
-    if (initialRestoreRef.current && book?.last_read_position != null && book?.chapters?.length) {
-      const offsetInBlock = book.last_read_position - block.startOffset;
-      if (offsetInBlock >= 0 && block.text.length > 0) {
-        const progress = offsetInBlock / block.text.length;
-        const contentEl = contentColumnRef.current;
+    const el = scrollContainerRef.current;
+    const contentEl = contentColumnRef.current;
+
+    if (searchTargetOffsetRef.current != null && block.text.length > 0) {
+      const offsetInByte = searchTargetOffsetRef.current - block.startOffset;
+      const charIndex = byteOffsetToCharIndex(block.text, offsetInByte);
+      const progress = Math.max(0, Math.min(1, charIndex / block.text.length));
+      const contentHeight = contentEl.offsetHeight;
+      const targetScroll = contentEl.offsetTop + progress * Math.max(0, contentHeight - el.clientHeight);
+      el.scrollTop = targetScroll;
+      searchTargetOffsetRef.current = null;
+    } else if (initialRestoreRef.current && book?.last_read_position != null && book?.chapters?.length) {
+      const offsetInByte = book.last_read_position - block.startOffset;
+      if (offsetInByte >= 0 && block.text.length > 0) {
+        const charIndex = byteOffsetToCharIndex(block.text, offsetInByte);
+        const progress = charIndex / block.text.length;
         const contentHeight = contentEl.offsetHeight;
-        const el = scrollContainerRef.current;
         const targetScroll = contentEl.offsetTop + progress * Math.max(0, contentHeight - el.clientHeight);
         el.scrollTop = targetScroll;
       }
       initialRestoreRef.current = false;
     } else {
-      scrollContainerRef.current.scrollTop = 0;
+      el.scrollTop = 0;
     }
   }, [currentChapterIndex, readingMode, chapterBlocks]);
 
@@ -287,6 +309,25 @@ export default function Reader() {
     }
   };
 
+  const handleSearchResultClick = (offset: number, query: string) => {
+    setHighlightQuery(query);
+    if (readingMode === 'page') {
+      goToOffset(offset);
+      return;
+    }
+
+    if (!book?.chapters?.length) return;
+
+    const idx = book.chapters.findIndex(
+      (c: Chapter) => offset >= c.position_start &&
+        (!c.position_end || offset < c.position_end)
+    );
+    if (idx >= 0) {
+      searchTargetOffsetRef.current = offset;
+      setCurrentChapterIndex(idx);
+    }
+  };
+
   if (!book) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--bg-color)' }}>
@@ -320,6 +361,8 @@ export default function Reader() {
           show={showToolbar}
           bookTitle={book.title}
           currentChapterTitle={currentChapterTitle}
+          bookId={bookId}
+          onSearchResultClick={handleSearchResultClick}
         />
 
         {readingMode === 'page' ? (
@@ -330,7 +373,7 @@ export default function Reader() {
             style={{ overflow: 'hidden' }}
           >
             {pages.length > 0 && (
-              <TextContent content={pages[currentPage].content} />
+              <TextContent content={pages[currentPage].content} highlight={highlightQuery} />
             )}
           </div>
         ) : (
@@ -339,7 +382,7 @@ export default function Reader() {
             <div ref={contentColumnRef} className="pt-14 pb-16 px-6" style={{ backgroundColor: 'var(--bg-color)' }}>
               {currentBlock ? (
                 <>
-                  <TextContent content={currentBlock.text} baseOffset={currentBlock.startOffset} />
+                  <TextContent content={currentBlock.text} baseOffset={currentBlock.startOffset} highlight={highlightQuery} />
                   <div className="flex justify-between items-center mt-8 pt-6 pb-4 border-t border-gray-200 dark:border-gray-700">
                     <button
                       onClick={goToPrevChapter}

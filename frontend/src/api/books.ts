@@ -9,6 +9,7 @@ import type {
   ScanResponse,
   ScanStatusResponse,
   ScanResultSummary,
+  BookSearchResponse,
 } from './types';
 
 export const booksApi = {
@@ -94,6 +95,13 @@ export const booksApi = {
 
   reanalyzeBook: async (id: number): Promise<Book> => {
     const response = await apiClient.post<Book>(`/ai/reanalyze/${id}`);
+    return response.data;
+  },
+
+  searchBookContent: async (id: number, query: string): Promise<BookSearchResponse> => {
+    const response = await apiClient.get<BookSearchResponse>(`/books/${id}/search`, {
+      params: { q: query },
+    });
     return response.data;
   },
 };

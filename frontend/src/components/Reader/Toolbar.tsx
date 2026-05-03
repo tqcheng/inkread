@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useReaderSettings } from '../../hooks/useReaderSettings';
 import { themes } from './ThemeProvider';
-import { ChevronLeft, Menu, Sun, Moon, Eye, BookOpen, Type, AlignJustify, ArrowLeft, ArrowRight, List, X } from 'lucide-react';
+import { ChevronLeft, Menu, Sun, Moon, Eye, BookOpen, Type, AlignJustify, ArrowLeft, ArrowRight, List, X, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import type { Chapter } from '../../api/types';
+import type { Chapter, BookSearchResult } from '../../api/types';
+import { useBookSearch } from '../../hooks/useBookSearch';
 
 interface ToolbarProps {
   bookTitle?: string;
@@ -15,6 +16,8 @@ interface ToolbarProps {
   onChapterClick?: (chapter: Chapter) => void;
   show: boolean;
   currentChapterTitle?: string;
+  bookId: number;
+  onSearchResultClick?: (offset: number, query: string) => void;
 }
 
 export function Toolbar({ 
@@ -26,12 +29,22 @@ export function Toolbar({
   onNext,
   onChapterClick,
   currentChapterTitle,
-  show 
+  show,
+  bookId,
+  onSearchResultClick,
 }: ToolbarProps) {
   const { theme, setTheme, fontSize, setFontSize, lineHeight, setLineHeight, readingMode, setReadingMode } = useReaderSettings();
   const navigate = useNavigate();
   const [showSettings, setShowSettings] = useState(false);
   const [showTOC, setShowTOC] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const { data: searchData, isLoading: searchLoading, error: searchError } = useBookSearch(
+    bookId,
+    searchQuery,
+    showSearch
+  );
 
   const themeIcons = {
     day: <Sun size={20} />,
@@ -55,9 +68,14 @@ export function Toolbar({
           <ChevronLeft size={24} />
         </button>
         <h1 className="flex-1 text-center font-semibold text-lg truncate">{bookTitle}</h1>
-        <button onClick={() => setShowSettings(!showSettings)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">
-          <Menu size={24} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button onClick={() => { setShowTOC(!showTOC); setShowSearch(false); }} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg" title="目录">
+            <List size={24} />
+          </button>
+          <button onClick={() => { setShowSearch(!showSearch); setShowTOC(false); }} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg" title="搜索">
+            <Search size={24} />
+          </button>
+        </div>
       </div>
 
       {/* Bottom Toolbar */}
@@ -98,13 +116,13 @@ export function Toolbar({
             ))}
           </div>
 
-          {/* TOC Button */}
+          {/* Menu Button */}
           <button
-            onClick={() => setShowTOC(!showTOC)}
+            onClick={() => setShowSettings(!showSettings)}
             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
-            title="目录"
+            title="设置"
           >
-            <List size={24} />
+            <Menu size={24} />
           </button>
 
           {/* Navigation */}
@@ -236,6 +254,74 @@ export function Toolbar({
           </div>
         </div>
       )}
+
+      {/* Search Sidebar */}
+      {showSearch && (
+        <div className="fixed top-14 right-0 bottom-16 w-80 bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 z-40 shadow-lg flex flex-col">
+          <div className="sticky top-0 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 p-4">
+            <h2 className="font-semibold mb-2">搜索</h2>
+            <div className="relative">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="输入关键词..."
+                className="w-full px-3 py-2.5 pr-8 rounded-lg bg-gray-100 dark:bg-gray-800 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+                autoFocus
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2">
+            {searchError && (
+              <div className="p-3 text-sm text-red-500 bg-red-50 dark:bg-red-900/20 rounded-lg mb-2">
+                搜索失败，请稍后重试
+              </div>
+            )}
+            {!searchQuery.trim() && (
+              <p className="text-gray-500 text-sm p-3 text-center">请输入搜索关键词</p>
+            )}
+            {searchQuery.trim() && !searchLoading && searchData?.results.length === 0 && (
+              <p className="text-gray-500 text-sm p-3 text-center">未找到匹配内容</p>
+            )}
+            {searchLoading && (
+              <p className="text-gray-500 text-sm p-3 text-center">搜索中...</p>
+            )}
+            {searchData?.results.map((result: BookSearchResult, index: number) => (
+              <button
+                key={index}
+                onClick={() => {
+                  onSearchResultClick?.(result.offset, searchQuery);
+                  setShowSearch(false);
+                }}
+                className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-base mb-1"
+              >
+                <p className="text-sm text-gray-400 line-clamp-3">
+                  <span className="font-medium text-gray-700 dark:text-gray-300">({result.position_percent}%)</span>...{highlightText(result.context, searchQuery)}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </>
+  );
+}
+
+function highlightText(text: string, term: string): React.ReactNode {
+  if (!term || !text) return text;
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+  return parts.map((part, i) =>
+    part.toLowerCase() === term.toLowerCase()
+      ? <mark key={i} className="bg-yellow-300 dark:bg-yellow-600 rounded-sm px-0.5">{part}</mark>
+      : part
   );
 }

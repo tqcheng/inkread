@@ -307,3 +307,22 @@ class SecuritySettingsRequest(BaseModel):
     enabled: bool
     current_password: Optional[str] = None
     new_password: Optional[str] = None
+
+
+# ============== Search Schemas ==============
+
+
+class BookSearchResult(BaseModel):
+    """Single search result within a book."""
+
+    offset: int
+    context: str
+    position_percent: int
+
+
+class BookSearchResponse(BaseModel):
+    """Response for book content search."""
+
+    book_id: int
+    query: str
+    results: List[BookSearchResult]

@@ -135,3 +135,15 @@ export interface SecuritySettingsResponse {
   success: boolean;
   enabled: boolean;
 }
+
+export interface BookSearchResult {
+  offset: number;
+  context: string;
+  position_percent: number;
+}
+
+export interface BookSearchResponse {
+  book_id: number;
+  query: string;
+  results: BookSearchResult[];
+}

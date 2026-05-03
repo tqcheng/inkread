@@ -298,3 +298,106 @@ class TestUncategorizedEndpoint:
         data = response.json()
         assert len(data["items"]) == 1
         assert data["items"][0]["title"] == "未分类"
+
+
+class TestBookSearchEndpoint:
+    """Test GET /api/v1/books/{book_id}/search endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_search_book_content(self, async_client, db_session, tmp_path):
+        """Test searching within book content."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("这是第一章的内容。李白在这里出现。后面还有更多内容。", encoding="utf-8")
+
+        book = Book(title="测试", filename="test.txt", file_path=str(test_file))
+        db_session.add(book)
+        await db_session.commit()
+        await db_session.refresh(book)
+
+        response = await async_client.get(f"/api/v1/books/{book.id}/search?q=李白")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["book_id"] == book.id
+        assert data["query"] == "李白"
+        assert len(data["results"]) == 1
+        assert "李白" in data["results"][0]["context"]
+        assert data["results"][0]["context"].startswith("李白")
+        assert data["results"][0]["position_percent"] >= 0
+        assert data["results"][0]["offset"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_search_no_results(self, async_client, db_session, tmp_path):
+        """Test search with no matches."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("这是一段测试内容。", encoding="utf-8")
+
+        book = Book(title="测试", filename="test.txt", file_path=str(test_file))
+        db_session.add(book)
+        await db_session.commit()
+        await db_session.refresh(book)
+
+        response = await async_client.get(f"/api/v1/books/{book.id}/search?q=不存在")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["results"] == []
+
+    @pytest.mark.asyncio
+    async def test_search_book_not_found(self, async_client):
+        """Test 404 for non-existent book."""
+        response = await async_client.get("/api/v1/books/9999/search?q=test")
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_search_empty_query(self, async_client, db_session, tmp_path):
+        """Test search with empty query returns 422."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("内容", encoding="utf-8")
+
+        book = Book(title="测试", filename="test.txt", file_path=str(test_file))
+        db_session.add(book)
+        await db_session.commit()
+        await db_session.refresh(book)
+
+        response = await async_client.get(f"/api/v1/books/{book.id}/search?q=")
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_search_multiple_matches(self, async_client, db_session, tmp_path):
+        """Test search returns all occurrences."""
+        content = "第一段提到李白。中间还有李白。最后又是李白。"
+        test_file = tmp_path / "test.txt"
+        test_file.write_text(content, encoding="utf-8")
+
+        book = Book(title="测试", filename="test.txt", file_path=str(test_file))
+        db_session.add(book)
+        await db_session.commit()
+        await db_session.refresh(book)
+
+        response = await async_client.get(f"/api/v1/books/{book.id}/search?q=李白")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["results"]) == 3
+        assert data["results"][0]["offset"] < data["results"][1]["offset"] < data["results"][2]["offset"]
+
+    @pytest.mark.asyncio
+    async def test_search_offset_correctness(self, async_client, db_session, tmp_path):
+        """Test that search offset matches actual content position."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("这是开头。然后李白出现了。这是结尾。", encoding="utf-8")
+
+        book = Book(title="测试", filename="test.txt", file_path=str(test_file))
+        db_session.add(book)
+        await db_session.commit()
+        await db_session.refresh(book)
+
+        response = await async_client.get(f"/api/v1/books/{book.id}/search?q=李白")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["results"]) == 1
+        offset = data["results"][0]["offset"]
+
+        content_response = await async_client.get(
+            f"/api/v1/books/{book.id}/content?offset={offset}&limit=50"
+        )
+        assert content_response.status_code == 200
+        assert "李白" in content_response.json()["content"]

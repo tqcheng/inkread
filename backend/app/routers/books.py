@@ -1,17 +1,21 @@
 """Books router - handles book listing, details, content, and management."""
 
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, desc, asc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from typing import Optional
 
+import aiofiles
 from app.core.database import get_db
 from app.models import Book
 from app.schemas import (
     BookResponse,
     BookList,
     BookContentResponse,
+    BookSearchResponse,
+    BookSearchResult,
 )
 from app.services.content import get_book_content as get_content
 
@@ -155,6 +159,66 @@ async def get_book_content(
         next_offset=result["next_offset"],
         is_end=result["is_end"],
     )
+
+
+@router.get("/{book_id}/search", response_model=BookSearchResponse)
+async def search_book_content(
+    book_id: int,
+    q: str = Query(..., min_length=1, description="Search query"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search for occurrences of a query string within a book's content."""
+    result = await db.execute(
+        select(Book).where(Book.id == book_id, Book.is_deleted == False)
+    )
+    book = result.scalar_one_or_none()
+
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+
+    file_path = Path(book.file_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    async with aiofiles.open(file_path, "rb") as f:
+        raw_bytes = await f.read()
+
+    content = raw_bytes.decode("utf-8", errors="ignore")
+    total_chars = len(content)
+
+    if total_chars == 0:
+        return BookSearchResponse(book_id=book_id, query=q, results=[])
+
+    query_lower = q.lower()
+    content_lower = content.lower()
+    results: list[BookSearchResult] = []
+    context_radius = 30
+    start = 0
+
+    while True:
+        idx = content_lower.find(query_lower, start)
+        if idx == -1:
+            break
+
+        offset = len(content[:idx].encode("utf-8"))
+
+        context_start = idx
+        context_end = min(total_chars, idx + len(q) + context_radius + 30)
+        context = content[context_start:context_end]
+
+        position_percent = min(100, int((idx / total_chars) * 100))
+
+        results.append(
+            BookSearchResult(
+                offset=offset,
+                context=context,
+                position_percent=position_percent,
+            )
+        )
+
+        start = idx + len(q)
+
+    return BookSearchResponse(book_id=book_id, query=q, results=results)
 
 
 @router.post("/{book_id}/favorite")
