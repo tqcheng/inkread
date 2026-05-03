@@ -3,10 +3,12 @@ import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { useBookQuery, useBookContentQuery } from '../hooks/useBooks';
 import { useReaderSettings } from '../hooks/useReaderSettings';
 import { useTextPagination } from '../hooks/useTextPagination';
+import { useAuth } from '../hooks/useAuth';
 import ThemeProvider from '../components/Reader/ThemeProvider';
 import { Toolbar } from '../components/Reader/Toolbar';
 import { TextContent } from '../components/Reader/TextContent';
 import { booksApi } from '../api/books';
+import LoginOverlay from '../components/LoginOverlay';
 import type { Chapter } from '../api/types';
 
 interface ChapterBlock {
@@ -81,6 +83,12 @@ export default function Reader() {
   const lastScrollTopRef = useRef<number>(0);
   const [chapterProgress, setChapterProgress] = useState(0);
   const initialRestoreRef = useRef(true);
+
+  const { token, isEnabled, isLoading: authLoading, checkStatus } = useAuth();
+
+  useEffect(() => {
+    checkStatus();
+  }, [checkStatus]);
 
   const { pages, currentPage, totalPages, goToNext, goToPrev, goToOffset } = useTextPagination(
     readingMode === 'page' ? (pageContent?.content || '') : '',
@@ -292,6 +300,7 @@ export default function Reader() {
 
   return (
     <ThemeProvider>
+      {isEnabled && !token && !authLoading && <LoginOverlay />}
       <div className={`h-screen flex flex-col ${readingMode === 'scroll' ? 'overflow-y-auto' : 'overflow-hidden'}`}
         style={{ backgroundColor: 'var(--bg-color-side)', color: 'var(--text-color)' }}
         ref={scrollContainerRef}

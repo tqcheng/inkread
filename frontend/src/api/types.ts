@@ -110,3 +110,28 @@ export interface ReadingProgressUpdate {
   current_chapter?: string;
   reading_settings?: Record<string, any>;
 }
+
+// Auth types
+export interface AuthStatus {
+  enabled: boolean;
+  has_password: boolean;
+}
+
+export interface AuthLoginRequest {
+  password: string;
+}
+
+export interface AuthLoginResponse {
+  token: string;
+}
+
+export interface SecuritySettingsRequest {
+  enabled: boolean;
+  current_password?: string;
+  new_password?: string;
+}
+
+export interface SecuritySettingsResponse {
+  success: boolean;
+  enabled: boolean;
+}

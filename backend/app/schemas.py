@@ -277,3 +277,33 @@ class BookContentResponse(BaseModel):
     content: str
     next_offset: Optional[int] = None
     is_end: bool = False
+
+
+# ============== Auth Schemas ==============
+
+
+class AuthStatusResponse(BaseModel):
+    """App password protection status."""
+
+    enabled: bool
+    has_password: bool
+
+
+class AuthLoginRequest(BaseModel):
+    """Request to login with app password."""
+
+    password: str
+
+
+class AuthLoginResponse(BaseModel):
+    """Response with auth token."""
+
+    token: str
+
+
+class SecuritySettingsRequest(BaseModel):
+    """Request to update security settings (admin only)."""
+
+    enabled: bool
+    current_password: Optional[str] = None
+    new_password: Optional[str] = None

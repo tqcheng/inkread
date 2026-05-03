@@ -6,6 +6,7 @@ import { adminApi } from '../api/admin';
 import { useAdminStore } from '../hooks/useAdmin';
 import { useQueryClient } from '@tanstack/react-query';
 import { BOOKS_QUERY_KEY } from '../hooks/useBooks';
+import SecuritySettingsSection from '../components/SecuritySettingsSection';
 
 const ADMIN_KEY = 'changeme';
 
@@ -237,6 +238,48 @@ export default function Admin() {
           </div>
         </section>
 
+        {/* Scan History */}
+        <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
+          <h2 className="text-lg font-semibold text-gray-800 mb-4">📋 最近扫描任务</h2>
+          {isStatusLoading && currentTaskId ? (
+            <div className="flex items-center justify-center py-8 text-gray-500">
+              <Loader2 className="w-6 h-6 animate-spin mr-2" />
+              加载中...
+            </div>
+          ) : currentStatus ? (
+            <div className="border rounded-lg divide-y">
+              <div key={currentStatus.task_id} className="p-4 flex items-center gap-4">
+                {getStatusIcon(currentStatus.status)}
+                <div className="flex-1">
+                  <div className="font-medium text-gray-800">
+                    任务 {currentStatus.task_id.slice(0, 8)}...
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {getStatusText(currentStatus.status)}
+                    {currentStatus.progress.total > 0 && ` - ${currentStatus.progress.current}/${currentStatus.progress.total}`}
+                  </div>
+                </div>
+                <div className="text-sm text-gray-400">
+                  {currentStatus.completed_at
+                    ? new Date(currentStatus.completed_at).toLocaleString('zh-CN')
+                    : currentStatus.started_at
+                    ? new Date(currentStatus.started_at).toLocaleString('zh-CN')
+                    : currentStatus.created_at
+                    ? new Date(currentStatus.created_at).toLocaleString('zh-CN')
+                    : '-'}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              暂无扫描记录
+            </div>
+          )}
+        </section>
+
+        {/* Security Settings Section */}
+        <SecuritySettingsSection />
+
         {/* Database Maintenance Section */}
         <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
           <div className="flex items-center gap-3 mb-4">
@@ -340,44 +383,7 @@ export default function Admin() {
           </div>
         )}
 
-        {/* Scan History */}
-        <section className="bg-white rounded-xl shadow-sm p-6">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">📋 最近扫描任务</h2>
-          {isStatusLoading && currentTaskId ? (
-            <div className="flex items-center justify-center py-8 text-gray-500">
-              <Loader2 className="w-6 h-6 animate-spin mr-2" />
-              加载中...
-            </div>
-          ) : currentStatus ? (
-            <div className="border rounded-lg divide-y">
-              <div key={currentStatus.task_id} className="p-4 flex items-center gap-4">
-                {getStatusIcon(currentStatus.status)}
-                <div className="flex-1">
-                  <div className="font-medium text-gray-800">
-                    任务 {currentStatus.task_id.slice(0, 8)}...
-                  </div>
-                  <div className="text-sm text-gray-500">
-                    {getStatusText(currentStatus.status)}
-                    {currentStatus.progress.total > 0 && ` - ${currentStatus.progress.current}/${currentStatus.progress.total}`}
-                  </div>
-                </div>
-                <div className="text-sm text-gray-400">
-                  {currentStatus.completed_at
-                    ? new Date(currentStatus.completed_at).toLocaleString('zh-CN')
-                    : currentStatus.started_at
-                    ? new Date(currentStatus.started_at).toLocaleString('zh-CN')
-                    : currentStatus.created_at
-                    ? new Date(currentStatus.created_at).toLocaleString('zh-CN')
-                    : '-'}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="text-center py-8 text-gray-500">
-              暂无扫描记录
-            </div>
-          )}
-        </section>
+
       </main>
     </div>
   );

@@ -1,8 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useBooksQuery, useToggleFavoriteMutation } from '../hooks/useBooks';
 import { useUIStore } from '../store/useUIStore';
 import { useAdminStore } from '../hooks/useAdmin';
+import { useAuth } from '../hooks/useAuth';
 import { adminApi } from '../api/admin';
 import { useQueryClient } from '@tanstack/react-query';
 import { Settings } from 'lucide-react';
@@ -13,6 +14,7 @@ import SortSelector from '../components/SortSelector';
 import BookCard from '../components/BookCard';
 import Pagination from '../components/Pagination';
 import AdminBar from '../components/AdminBar';
+import LoginOverlay from '../components/LoginOverlay';
 
 export default function Home() {
   const [page, setPage] = useState(1);
@@ -36,7 +38,13 @@ export default function Home() {
   const queryClient = useQueryClient();
   const { disableAdminMode } = useAdminStore();
 
+  const { token, isEnabled, isLoading: authLoading, checkStatus } = useAuth();
+
   const toggleFavoriteMutation = useToggleFavoriteMutation();
+
+  useEffect(() => {
+    checkStatus();
+  }, [checkStatus]);
 
   const handleSearch = useCallback((query: string) => {
     setSearch(query);
@@ -92,6 +100,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {isEnabled && !token && !authLoading && <LoginOverlay />}
       {/* Header */}
       <header className="bg-white shadow-sm sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 py-4">

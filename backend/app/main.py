@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import init_db
 from app.middleware.admin_auth import AdminAuthMiddleware
-from app.routers import admin, books, chapters, scan, settings, ai
+from app.routers import admin, books, chapters, scan, settings, ai, auth
 
 
 @asynccontextmanager
@@ -37,4 +37,5 @@ app.include_router(books.router, prefix="/api/v1/books", tags=["books"])
 app.include_router(chapters.router, prefix="/api/v1/chapters", tags=["chapters"])
 app.include_router(scan.router, prefix="/api/v1/scan", tags=["scan"])
 app.include_router(settings.router, prefix="/api/v1/settings", tags=["settings"])
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(ai.router, prefix="/api/v1/ai", tags=["ai"])

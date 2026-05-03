@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { Book, UpdateMetadataData } from './types';
+import type { Book, UpdateMetadataData, SecuritySettingsRequest, SecuritySettingsResponse } from './types';
 
 export const adminApi = {
   batchDelete: async (ids: number[]): Promise<void> => {
@@ -38,6 +38,11 @@ export const adminApi = {
 
   resetDatabase: async (): Promise<{ success: boolean; message: string }> => {
     const response = await apiClient.post<{ success: boolean; message: string }>('/admin/reset');
+    return response.data;
+  },
+
+  updateSecuritySettings: async (data: SecuritySettingsRequest): Promise<SecuritySettingsResponse> => {
+    const response = await apiClient.post<SecuritySettingsResponse>('/admin/settings/security', data);
     return response.data;
   },
 };

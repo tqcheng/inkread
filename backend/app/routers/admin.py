@@ -1,5 +1,6 @@
 """Admin router - handles admin-only operations."""
 
+import bcrypt
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +8,8 @@ from pathlib import Path
 
 from app.core.database import get_db
 from app.models import Book
-from app.schemas import AdminBatchDeleteRequest, BookMetadataUpdate, BookResponse
+from app.schemas import AdminBatchDeleteRequest, BookMetadataUpdate, BookResponse, SecuritySettingsRequest
+from app.services.settings_service import get_setting, set_setting, get_app_password_status
 
 router = APIRouter()
 
@@ -116,3 +118,47 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
     await db.commit()
 
     return {"success": True, "message": "数据库已重置"}
+
+
+@router.post("/settings/security")
+async def update_security_settings(
+    request: SecuritySettingsRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update app password security settings (admin only)."""
+    status = await get_app_password_status(db)
+
+    if request.enabled:
+        # Setting or changing password
+        if not status["has_password"]:
+            # First time: must provide new_password
+            if not request.new_password:
+                raise HTTPException(status_code=400, detail="New password is required")
+            hashed = bcrypt.hashpw(
+                request.new_password.encode("utf-8"), bcrypt.gensalt()
+            ).decode("utf-8")
+            await set_setting(db, "app_password_hash", hashed)
+        elif request.new_password:
+            # Changing existing password: must verify current
+            if not request.current_password:
+                raise HTTPException(status_code=400, detail="Current password is required")
+            stored_hash = await get_setting(db, "app_password_hash")
+            if not stored_hash or not bcrypt.checkpw(
+                request.current_password.encode("utf-8"), stored_hash.encode("utf-8")
+            ):
+                raise HTTPException(status_code=401, detail="Current password is incorrect")
+            hashed = bcrypt.hashpw(
+                request.new_password.encode("utf-8"), bcrypt.gensalt()
+            ).decode("utf-8")
+            await set_setting(db, "app_password_hash", hashed)
+        else:
+            # Re-enabling without changing password: invalidate old token
+            await set_setting(db, "app_auth_token", None)
+
+        await set_setting(db, "app_password_enabled", "true")
+    else:
+        # Disabling: just turn off, no password required
+        await set_setting(db, "app_password_enabled", "false")
+        await set_setting(db, "app_auth_token", None)
+
+    return {"success": True, "enabled": request.enabled}
