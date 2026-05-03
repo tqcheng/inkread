@@ -2,8 +2,9 @@
 
 import asyncio
 import logging
+import os
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 
 import aiofiles
 import chardet
@@ -66,17 +67,41 @@ async def detect_encoding(file_path: Path) -> Tuple[Optional[str], float]:
         return None, 0.0
 
 
-async def convert_to_utf8(file_path: Path, confidence_threshold: float = CONFIDENCE_THRESHOLD) -> Tuple[bool, str]:
+async def _try_decode(raw_data: bytes, encoding: str) -> Tuple[str, int]:
+    """
+    Try to decode bytes with given encoding.
+
+    Args:
+        raw_data: Raw byte data
+        encoding: Encoding to try
+
+    Returns:
+        Tuple of (decoded_content, error_count)
+    """
+    try:
+        content = raw_data.decode(encoding, errors='replace')
+        error_count = content.count('\ufffd')
+        return content, error_count
+    except Exception:
+        return "", float('inf')
+
+
+async def convert_to_utf8(
+    file_path: Path,
+    confidence_threshold: float = CONFIDENCE_THRESHOLD,
+    aggressive: bool = False,
+) -> Tuple[bool, str]:
     """
     Convert file encoding to UTF-8.
-    
-    Creates a backup with .bak extension before conversion.
-    Only converts if confidence is above threshold.
-    
+
+    Creates a backup with .txt.bak extension before conversion.
+    When aggressive=True, tries fallback encodings even if confidence is low.
+
     Args:
         file_path: Path to the file to convert
         confidence_threshold: Minimum confidence for conversion
-        
+        aggressive: If True, try common fallback encodings when confidence is low
+
     Returns:
         Tuple of (success, message)
         - success: True if converted or already UTF-8
@@ -85,60 +110,97 @@ async def convert_to_utf8(file_path: Path, confidence_threshold: float = CONFIDE
     try:
         # Detect current encoding
         encoding, confidence = await detect_encoding(file_path)
-        
+
         if not encoding:
             return False, "encoding_detection_failed"
-        
+
         # Check if already UTF-8
         if encoding.upper() in ('UTF-8', 'UTF8', 'ASCII'):
             logger.debug(f"File already in UTF-8: {file_path}")
             return False, "already_utf8"
-        
-        # Check confidence threshold
-        if confidence < confidence_threshold:
+
+        # Read raw data
+        try:
+            async with aiofiles.open(file_path, 'rb') as f:
+                raw_data = await f.read()
+        except Exception as e:
+            logger.error(f"Failed to read file: {e}")
+            return False, "read_error"
+
+        if not raw_data:
+            logger.warning(f"Empty file: {file_path}")
+            return False, "empty_content"
+
+        # Determine which encodings to try
+        encodings_to_try: List[str] = []
+
+        if confidence >= confidence_threshold:
+            encodings_to_try.append(encoding)
+        elif aggressive:
+            # Try detected encoding first, then fallbacks
+            encodings_to_try.append(encoding)
+            fallbacks = ['GBK', 'Big5', 'GB18030', 'cp1252', 'ISO-8859-1']
+            for fb in fallbacks:
+                if fb != encoding:
+                    encodings_to_try.append(fb)
+        else:
             logger.warning(
                 f"Low confidence ({confidence:.2f} < {confidence_threshold}) for {file_path}, "
                 "skipping conversion"
             )
             return False, f"low_confidence_{confidence:.2f}"
-        
-        # Read file content with detected encoding
-        try:
-            async with aiofiles.open(file_path, 'r', encoding=encoding, errors='ignore') as f:
-                content = await f.read()
-        except Exception as e:
-            logger.error(f"Failed to read file with detected encoding {encoding}: {e}")
-            return False, f"read_error_{encoding}"
-        
-        if not content:
-            logger.warning(f"Empty content after decoding: {file_path}")
-            return False, "empty_content"
-        
+
+        # Try each encoding and pick the best one (fewest replacement chars)
+        best_content = ""
+        best_encoding = ""
+        best_errors = float('inf')
+
+        for enc in encodings_to_try:
+            content, error_count = await _try_decode(raw_data, enc)
+            if content and error_count < best_errors:
+                best_content = content
+                best_encoding = enc
+                best_errors = error_count
+                if error_count == 0:
+                    break
+
+        if not best_content:
+            logger.error(f"Failed to decode {file_path} with any encoding")
+            return False, "decode_failed"
+
+        if best_errors > 0:
+            logger.warning(
+                f"Decoded {file_path.name} with {best_encoding} but had {best_errors} replacement characters"
+            )
+
         # Create backup
         backup_path = file_path.with_suffix('.txt.bak')
         try:
-            await aiofiles.os.rename(file_path, backup_path)
+            # Remove existing backup if present
+            if await asyncio.to_thread(os.path.exists, backup_path):
+                await asyncio.to_thread(os.remove, backup_path)
+            await asyncio.to_thread(os.rename, file_path, backup_path)
             logger.debug(f"Created backup: {backup_path}")
         except Exception as e:
             logger.error(f"Failed to create backup: {e}")
             return False, "backup_failed"
-        
+
         # Write UTF-8 content
         try:
             async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
-                await f.write(content)
-            logger.info(f"Converted to UTF-8: {file_path.name} (from {encoding})")
-            return True, f"converted_{encoding}_to_utf8"
+                await f.write(best_content)
+            logger.info(f"Converted to UTF-8: {file_path.name} (from {best_encoding})")
+            return True, f"converted_{best_encoding}_to_utf8"
         except Exception as e:
             # Attempt to restore backup
             logger.error(f"Failed to write UTF-8 file: {e}")
             try:
-                await aiofiles.os.rename(backup_path, file_path)
+                await asyncio.to_thread(os.rename, backup_path, file_path)
                 logger.info(f"Restored backup for: {file_path}")
             except Exception as restore_error:
                 logger.error(f"Failed to restore backup: {restore_error}")
             return False, "write_error"
-        
+
     except Exception as e:
         logger.exception(f"Unexpected error converting {file_path}: {e}")
         return False, f"unexpected_error_{type(e).__name__}"
@@ -155,7 +217,7 @@ async def get_file_info(file_path: Path) -> dict:
         Dictionary with file information
     """
     try:
-        stat = await aiofiles.os.stat(file_path)
+        stat = await asyncio.to_thread(os.stat, file_path)
         encoding, confidence = await detect_encoding(file_path)
         
         return {

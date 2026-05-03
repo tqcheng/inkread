@@ -185,8 +185,8 @@ async def scan_single_file(
         is_converted = False
 
         if encoding and encoding.upper() not in ("UTF-8", "UTF8", "ASCII"):
-            # Try to convert to UTF-8
-            converted, convert_msg = await convert_to_utf8(file_path)
+            # Try to convert to UTF-8 (aggressive mode for scan)
+            converted, convert_msg = await convert_to_utf8(file_path, aggressive=True)
             is_converted = converted
             if converted:
                 logger.info(f"Converted {filename} from {encoding} to UTF-8")
