@@ -109,4 +109,25 @@ describe('measureChapterPages', () => {
     expect(pages.at(-1)?.endOffset).toBe(text.length)
     expect(pages.at(-1)?.endOffset).toBeLessThanOrEqual(text.length)
   })
+
+  it('keeps a title with the first slice of an oversized following paragraph', () => {
+    const pages = measureChapterPages({
+      chapterIndex: 5,
+      text: 'a'.repeat(15) + '\nChapter 2\n' + '长段'.repeat(4000),
+      layout: {
+        viewportWidth: 920,
+        viewportHeight: 760,
+        contentWidth: 180,
+        contentHeight: 140,
+        fontSize: 18,
+        lineHeight: 1.7,
+        paragraphGap: 16,
+      },
+    })
+
+    const titlePage = pages.find((page) => page.blocks.some((block) => block.kind === 'title'))
+
+    expect(titlePage).toBeDefined()
+    expect(titlePage?.blocks.some((block) => block.kind === 'paragraph')).toBe(true)
+  })
 })

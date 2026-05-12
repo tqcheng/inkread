@@ -41,11 +41,24 @@ function estimateKeepWithNextHeight(
 
   for (let nextIndex = index + 1; nextIndex < blocks.length; nextIndex += 1) {
     const nextBlock = blocks[nextIndex]
-    totalHeight += estimateBlockHeight(nextBlock, layout)
 
-    if (nextBlock.kind !== 'blank') {
+    if (nextBlock.kind === 'blank') {
+      totalHeight += estimateBlockHeight(nextBlock, layout)
+      continue
+    }
+
+    if (estimateBlockHeight(nextBlock, layout) > layout.contentHeight) {
+      const firstSlice = splitOversizedBlock(
+        nextBlock,
+        layout,
+        Math.max(layout.contentHeight - totalHeight, 0)
+      )
+      totalHeight += estimateBlockHeight(firstSlice, layout)
       break
     }
+
+    totalHeight += estimateBlockHeight(nextBlock, layout)
+    break
   }
 
   return totalHeight
@@ -135,16 +148,19 @@ export function measureChapterPages(input: MeasureChapterPagesInput): MeasuredPa
       pushPage()
     }
 
-    if (pageHeight > 0 && pageHeight + blockHeight > maxHeight) {
-      pushPage()
-    }
-
     if (blockHeight > maxHeight) {
       let remainder = block.text
       let remainderStartOffset = block.startOffset
       let sliceIndex = 0
 
       while (remainder.length > 0) {
+        const availableHeight = pageHeight > 0 ? maxHeight - pageHeight : maxHeight
+
+        if (pageHeight > 0 && availableHeight <= 0) {
+          pushPage()
+          continue
+        }
+
         const slicedBlock = splitOversizedBlock(
           {
             ...block,
@@ -154,10 +170,11 @@ export function measureChapterPages(input: MeasureChapterPagesInput): MeasuredPa
             endOffset: remainderStartOffset + remainder.length,
           },
           input.layout,
-          maxHeight
+          availableHeight
         )
 
         pageBlocks.push(slicedBlock)
+        pageHeight += estimateBlockHeight(slicedBlock, input.layout)
         pushPage()
 
         remainder = remainder.slice(slicedBlock.text.length)
@@ -166,6 +183,10 @@ export function measureChapterPages(input: MeasureChapterPagesInput): MeasuredPa
       }
 
       continue
+    }
+
+    if (pageHeight > 0 && pageHeight + blockHeight > maxHeight) {
+      pushPage()
     }
 
     pageBlocks.push(block)
