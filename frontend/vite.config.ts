@@ -12,6 +12,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
+    // Shared Vitest setup for custom matchers and DOM assertions.
     setupFiles: './src/test/setup.ts',
     css: true
   }
