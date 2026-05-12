@@ -1,7 +1,7 @@
 import { tokenizeChapter } from './tokenizeChapter'
 import type { MeasuredInlineBlock, MeasuredPage } from './types'
 
-interface PaginationLayout {
+export interface PaginationLayout {
   viewportWidth: number
   viewportHeight: number
   contentWidth: number
@@ -11,7 +11,7 @@ interface PaginationLayout {
   paragraphGap: number
 }
 
-interface MeasureChapterPagesInput {
+export interface MeasureChapterPagesInput {
   chapterIndex: number
   text: string
   layout: PaginationLayout
@@ -27,7 +27,7 @@ function countVisualUnits(text: string): number {
   return units
 }
 
-function estimateBlockHeight(
+export function estimateBlockHeight(
   block: MeasuredInlineBlock,
   layout: PaginationLayout
 ): number {
@@ -41,7 +41,7 @@ function estimateBlockHeight(
   return visualLines * layout.fontSize * layout.lineHeight * titleBoost + layout.paragraphGap
 }
 
-function splitOversizedBlock(
+export function splitOversizedBlock(
   block: MeasuredInlineBlock,
   layout: PaginationLayout,
   remainingHeight: number
