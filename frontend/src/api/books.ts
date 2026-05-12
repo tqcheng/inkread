@@ -12,6 +12,12 @@ import type {
   BookSearchResponse,
 } from './types';
 
+interface GetBookContentParams {
+  offset: number;
+  limit: number;
+  chapter_index?: number;
+}
+
 export const booksApi = {
   getBooks: async (params: GetBooksParams = {}): Promise<BookListResponse> => {
     const response = await apiClient.get<BookListResponse>('/books', { params });
@@ -29,9 +35,15 @@ export const booksApi = {
     limit: number = 10000,
     chapterIndex?: number
   ): Promise<BookContentResponse> => {
-    const params: Record<string, string | number> = chapterIndex !== undefined
-      ? { chapter_index: chapterIndex }
-      : { offset, limit };
+    const params: GetBookContentParams = {
+      offset,
+      limit,
+    };
+
+    if (chapterIndex !== undefined) {
+      params.chapter_index = chapterIndex;
+    }
+
     const response = await apiClient.get<BookContentResponse>(`/books/${id}/content`, {
       params,
     });

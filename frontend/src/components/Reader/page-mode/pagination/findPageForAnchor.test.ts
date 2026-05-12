@@ -50,4 +50,35 @@ describe('findPageForAnchor', () => {
   it('clamps to the nearest page when the anchor is outside the range', () => {
     expect(findPageForAnchor(pages, 999)).toBe(2)
   })
+
+  it('picks the page whose range contains the saved anchor after re-pagination', () => {
+    const repaginated: MeasuredPage[] = [
+      {
+        chapterIndex: 3,
+        pageInChapter: 0,
+        startOffset: 0,
+        endOffset: 80,
+        anchorOffset: 0,
+        blocks: []
+      },
+      {
+        chapterIndex: 3,
+        pageInChapter: 1,
+        startOffset: 80,
+        endOffset: 160,
+        anchorOffset: 80,
+        blocks: []
+      },
+      {
+        chapterIndex: 3,
+        pageInChapter: 2,
+        startOffset: 160,
+        endOffset: 240,
+        anchorOffset: 160,
+        blocks: []
+      }
+    ]
+
+    expect(findPageForAnchor(repaginated, 158)).toBe(1)
+  })
 })

@@ -68,6 +68,7 @@ export interface BookContentResponse {
   book_id: number;
   content: string;
   next_offset: number | null;
+  total_size?: number;
   is_end: boolean;
 }
 
