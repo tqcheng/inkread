@@ -172,9 +172,15 @@ export function measureChapterPages(input: MeasureChapterPagesInput): MeasuredPa
           input.layout,
           availableHeight
         )
+        const slicedBlockHeight = estimateBlockHeight(slicedBlock, input.layout)
+
+        if (pageHeight > 0 && slicedBlockHeight > availableHeight) {
+          pushPage()
+          continue
+        }
 
         pageBlocks.push(slicedBlock)
-        pageHeight += estimateBlockHeight(slicedBlock, input.layout)
+        pageHeight += slicedBlockHeight
         pushPage()
 
         remainder = remainder.slice(slicedBlock.text.length)

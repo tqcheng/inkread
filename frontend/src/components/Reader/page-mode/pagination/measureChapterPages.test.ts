@@ -130,4 +130,32 @@ describe('measureChapterPages', () => {
     expect(titlePage).toBeDefined()
     expect(titlePage?.blocks.some((block) => block.kind === 'paragraph')).toBe(true)
   })
+
+  it('moves an oversized slice to a fresh page when the remaining height is too small', () => {
+    const layout = {
+      viewportWidth: 920,
+      viewportHeight: 760,
+      contentWidth: 180,
+      contentHeight: 140,
+      fontSize: 18,
+      lineHeight: 1.7,
+      paragraphGap: 16,
+    }
+    const pages = measureChapterPages({
+      chapterIndex: 6,
+      text: 'a'.repeat(15) + '\n\n' + '长段'.repeat(4000),
+      layout,
+    })
+
+    expect(pages.length).toBeGreaterThan(1)
+    expect(
+      pages.every(
+        (page) =>
+          page.blocks.reduce(
+            (height, block) => height + estimateBlockHeight(block, layout),
+            0
+          ) <= layout.contentHeight
+      )
+    ).toBe(true)
+  })
 })
