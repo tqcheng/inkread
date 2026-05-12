@@ -30,8 +30,21 @@ const pages: MeasuredPage[] = [
 ]
 
 describe('findPageForAnchor', () => {
+  it('returns -1 when no pages are available', () => {
+    expect(findPageForAnchor([], 0)).toBe(-1)
+  })
+
   it('returns the page containing the anchor offset', () => {
     expect(findPageForAnchor(pages, 130)).toBe(1)
+  })
+
+  it('clamps to the first page when the anchor is below the measured range', () => {
+    expect(findPageForAnchor(pages, -5)).toBe(0)
+  })
+
+  it('treats exact end offsets as the next page boundary', () => {
+    expect(findPageForAnchor(pages, 120)).toBe(1)
+    expect(findPageForAnchor(pages, 260)).toBe(2)
   })
 
   it('clamps to the nearest page when the anchor is outside the range', () => {
