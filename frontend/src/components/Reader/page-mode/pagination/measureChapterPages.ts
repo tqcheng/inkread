@@ -27,6 +27,30 @@ function countVisualUnits(text: string): number {
   return units
 }
 
+function estimateKeepWithNextHeight(
+  blocks: MeasuredInlineBlock[],
+  index: number,
+  layout: PaginationLayout
+): number {
+  const block = blocks[index]
+  let totalHeight = estimateBlockHeight(block, layout)
+
+  if (block.kind !== 'title') {
+    return totalHeight
+  }
+
+  for (let nextIndex = index + 1; nextIndex < blocks.length; nextIndex += 1) {
+    const nextBlock = blocks[nextIndex]
+    totalHeight += estimateBlockHeight(nextBlock, layout)
+
+    if (nextBlock.kind !== 'blank') {
+      break
+    }
+  }
+
+  return totalHeight
+}
+
 export function estimateBlockHeight(
   block: MeasuredInlineBlock,
   layout: PaginationLayout
@@ -47,16 +71,24 @@ export function splitOversizedBlock(
   remainingHeight: number
 ): MeasuredInlineBlock {
   const charsPerLine = Math.max(8, Math.floor(layout.contentWidth / layout.fontSize))
+  const titleBoost = block.kind === 'title' ? 1.35 : 1
+  const usableHeight = Math.max(0, remainingHeight - layout.paragraphGap)
   const linesThatFit = Math.max(
     1,
-    Math.floor(remainingHeight / (layout.fontSize * layout.lineHeight))
+    Math.floor(usableHeight / (layout.fontSize * layout.lineHeight * titleBoost))
   )
   const maxUnits = Math.max(charsPerLine, charsPerLine * linesThatFit)
   let sliceLength = 0
   let sliceUnits = 0
 
-  while (sliceLength < block.text.length && sliceUnits < maxUnits) {
-    sliceUnits += countVisualUnits(block.text[sliceLength])
+  while (sliceLength < block.text.length) {
+    const nextUnits = countVisualUnits(block.text[sliceLength])
+
+    if (sliceLength > 0 && sliceUnits + nextUnits > maxUnits) {
+      break
+    }
+
+    sliceUnits += nextUnits
     sliceLength += 1
   }
 
@@ -95,10 +127,11 @@ export function measureChapterPages(input: MeasureChapterPagesInput): MeasuredPa
     pageHeight = 0
   }
 
-  for (const block of blocks) {
+  for (const [index, block] of blocks.entries()) {
     const blockHeight = estimateBlockHeight(block, input.layout)
+    const keepWithNextHeight = estimateKeepWithNextHeight(blocks, index, input.layout)
 
-    if (pageHeight > 0 && pageHeight + blockHeight > maxHeight && block.kind === 'title') {
+    if (pageHeight > 0 && block.kind === 'title' && pageHeight + keepWithNextHeight > maxHeight) {
       pushPage()
     }
 

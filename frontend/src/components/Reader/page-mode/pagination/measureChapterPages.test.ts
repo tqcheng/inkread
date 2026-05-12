@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { measureChapterPages } from './measureChapterPages'
+import { estimateBlockHeight, measureChapterPages } from './measureChapterPages'
 
 describe('measureChapterPages', () => {
   it('keeps a title block off a nearly full page', () => {
@@ -38,5 +38,75 @@ describe('measureChapterPages', () => {
 
     expect(pages.length).toBeGreaterThan(1)
     expect(pages[0].endOffset).toBeLessThan(pages.at(-1)!.endOffset)
+  })
+
+  it('keeps a title with the following content instead of orphaning it', () => {
+    const pages = measureChapterPages({
+      chapterIndex: 2,
+      text: 'a'.repeat(15) + '\nChapter 2\nb',
+      layout: {
+        viewportWidth: 920,
+        viewportHeight: 760,
+        contentWidth: 180,
+        contentHeight: 140,
+        fontSize: 18,
+        lineHeight: 1.7,
+        paragraphGap: 16,
+      },
+    })
+
+    const titlePage = pages.find((page) => page.blocks.some((block) => block.kind === 'title'))
+
+    expect(titlePage).toBeDefined()
+    expect(titlePage?.blocks.at(-1)?.kind).not.toBe('title')
+    expect(titlePage?.blocks.some((block) => block.kind === 'paragraph')).toBe(true)
+  })
+
+  it('keeps oversized paragraph slices within the page height budget', () => {
+    const layout = {
+      viewportWidth: 920,
+      viewportHeight: 760,
+      contentWidth: 720,
+      contentHeight: 560,
+      fontSize: 18,
+      lineHeight: 1.7,
+      paragraphGap: 16,
+    }
+    const pages = measureChapterPages({
+      chapterIndex: 3,
+      text: '长段'.repeat(4000),
+      layout,
+    })
+
+    expect(pages.length).toBeGreaterThan(1)
+    expect(
+      pages.every(
+        (page) =>
+          page.blocks.reduce(
+            (height, block) => height + estimateBlockHeight(block, layout),
+            0
+          ) <= layout.contentHeight
+      )
+    ).toBe(true)
+  })
+
+  it('does not let the final page offset exceed the source text length', () => {
+    const text = '第一章 开始\n正文'
+    const pages = measureChapterPages({
+      chapterIndex: 4,
+      text,
+      layout: {
+        viewportWidth: 920,
+        viewportHeight: 760,
+        contentWidth: 720,
+        contentHeight: 560,
+        fontSize: 18,
+        lineHeight: 1.7,
+        paragraphGap: 16,
+      },
+    })
+
+    expect(pages.at(-1)?.endOffset).toBe(text.length)
+    expect(pages.at(-1)?.endOffset).toBeLessThanOrEqual(text.length)
   })
 })

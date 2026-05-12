@@ -14,20 +14,22 @@ export function tokenizeChapter(text: string): MeasuredInlineBlock[] {
   const blocks: MeasuredInlineBlock[] = []
   let offset = 0
 
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     const trimmed = line.trim()
     const kind: MeasuredInlineBlock['kind'] =
       trimmed.length === 0 ? 'blank' : isChapterTitle(trimmed) ? 'title' : 'paragraph'
+    const hasTrailingNewline = index < lines.length - 1
+    const blockLength = line.length + (hasTrailingNewline ? 1 : 0)
 
     blocks.push({
       key: `${kind}-${offset}`,
       text: line,
       kind,
       startOffset: offset,
-      endOffset: offset + line.length + 1,
+      endOffset: offset + blockLength,
     })
 
-    offset += line.length + 1
+    offset += blockLength
   }
 
   return blocks
