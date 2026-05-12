@@ -1,4 +1,5 @@
 import { useReaderSettings } from '../../hooks/useReaderSettings';
+import { isChapterTitle } from './page-mode/pagination/tokenizeChapter';
 
 interface TextContentProps {
   content: string;
@@ -19,15 +20,6 @@ function highlightText(text: string, term: string): React.ReactNode {
 
 export function TextContent({ content, baseOffset = 0, highlight }: TextContentProps) {
   const { fontSize, lineHeight } = useReaderSettings();
-
-  const isChapterTitle = (line: string): boolean => {
-    const patterns = [
-      /^\s*第[一二三四五六七八九十百千]+章.*$/,
-      /^\s*第\d+章.*$/,
-      /^\s*Chapter\s+\d+.*$/i,
-    ];
-    return patterns.some(pattern => pattern.test(line));
-  };
 
   const renderContent = () => {
     const lines = content.split('\n');
