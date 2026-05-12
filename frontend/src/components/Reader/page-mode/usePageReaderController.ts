@@ -12,7 +12,6 @@ export function usePageReaderController(params: {
   initialAnchor: number
 }) {
   const [anchorOffset, setAnchorOffset] = useState(params.initialAnchor)
-  const [currentPageIndex, setCurrentPageIndex] = useState(0)
 
   const pages = useMemo(
     () =>
@@ -40,10 +39,21 @@ export function usePageReaderController(params: {
   )
 
   useEffect(() => {
-    setCurrentPageIndex(findPageForAnchor(pages, anchorOffset))
-  }, [pages, anchorOffset])
+    setAnchorOffset(params.initialAnchor)
+  }, [params.chapterIndex, params.initialAnchor])
 
+  const currentPageIndex = findPageForAnchor(pages, anchorOffset)
   const currentPage = pages[currentPageIndex] ?? null
+
+  const setCurrentPageIndex = (pageIndex: number) => {
+    const nextPage = pages[pageIndex]
+
+    if (!nextPage) {
+      return
+    }
+
+    setAnchorOffset(nextPage.anchorOffset ?? nextPage.startOffset)
+  }
 
   return {
     pages,
