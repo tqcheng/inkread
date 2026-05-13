@@ -1,3 +1,4 @@
+import { createDomBlockMeasurer } from './createDomBlockMeasurer'
 import { tokenizeChapter } from './tokenizeChapter'
 import type { MeasuredInlineBlock, MeasuredPage } from './types'
 
@@ -11,10 +12,16 @@ export interface PaginationLayout {
   paragraphGap: number
 }
 
+interface BlockHeightMeasurer {
+  measure: (blocks: MeasuredInlineBlock[]) => number
+  dispose?: () => void
+}
+
 export interface MeasureChapterPagesInput {
   chapterIndex: number
   text: string
   layout: PaginationLayout
+  measurer?: BlockHeightMeasurer
 }
 
 function countVisualUnits(text: string): number {
@@ -27,43 +34,6 @@ function countVisualUnits(text: string): number {
   return units
 }
 
-function estimateKeepWithNextHeight(
-  blocks: MeasuredInlineBlock[],
-  index: number,
-  layout: PaginationLayout
-): number {
-  const block = blocks[index]
-  let totalHeight = estimateBlockHeight(block, layout)
-
-  if (block.kind !== 'title') {
-    return totalHeight
-  }
-
-  for (let nextIndex = index + 1; nextIndex < blocks.length; nextIndex += 1) {
-    const nextBlock = blocks[nextIndex]
-
-    if (nextBlock.kind === 'blank') {
-      totalHeight += estimateBlockHeight(nextBlock, layout)
-      continue
-    }
-
-    if (estimateBlockHeight(nextBlock, layout) > layout.contentHeight) {
-      const firstSlice = splitOversizedBlock(
-        nextBlock,
-        layout,
-        Math.max(layout.contentHeight - totalHeight, 0)
-      )
-      totalHeight += estimateBlockHeight(firstSlice, layout)
-      break
-    }
-
-    totalHeight += estimateBlockHeight(nextBlock, layout)
-    break
-  }
-
-  return totalHeight
-}
-
 export function estimateBlockHeight(
   block: MeasuredInlineBlock,
   layout: PaginationLayout
@@ -73,132 +43,291 @@ export function estimateBlockHeight(
     block.kind === 'blank'
       ? 1
       : Math.max(1, Math.ceil(countVisualUnits(block.text) / charsPerLine))
-  const titleBoost = block.kind === 'title' ? 1.35 : 1
+  const titleBoost = block.kind === 'title' ? 1.42 : 1
 
   return visualLines * layout.fontSize * layout.lineHeight * titleBoost + layout.paragraphGap
 }
 
-export function splitOversizedBlock(
-  block: MeasuredInlineBlock,
-  layout: PaginationLayout,
-  remainingHeight: number
-): MeasuredInlineBlock {
-  const charsPerLine = Math.max(8, Math.floor(layout.contentWidth / layout.fontSize))
-  const titleBoost = block.kind === 'title' ? 1.35 : 1
-  const usableHeight = Math.max(0, remainingHeight - layout.paragraphGap)
-  const linesThatFit = Math.max(
-    1,
-    Math.floor(usableHeight / (layout.fontSize * layout.lineHeight * titleBoost))
-  )
-  const maxUnits = Math.max(charsPerLine, charsPerLine * linesThatFit)
-  let sliceLength = 0
-  let sliceUnits = 0
-
-  while (sliceLength < block.text.length) {
-    const nextUnits = countVisualUnits(block.text[sliceLength])
-
-    if (sliceLength > 0 && sliceUnits + nextUnits > maxUnits) {
-      break
-    }
-
-    sliceUnits += nextUnits
-    sliceLength += 1
+function createFallbackMeasurer(layout: PaginationLayout): BlockHeightMeasurer {
+  return {
+    measure(blocks) {
+      return blocks.reduce(
+        (height, block) => height + estimateBlockHeight(block, layout),
+        0
+      )
+    },
   }
+}
 
-  const text = block.text.slice(0, sliceLength)
+function createBlockMeasurer(
+  input: MeasureChapterPagesInput
+): BlockHeightMeasurer {
+  return (
+    input.measurer ??
+    createDomBlockMeasurer(input.layout) ??
+    createFallbackMeasurer(input.layout)
+  )
+}
 
+function cloneBlockWithText(
+  block: MeasuredInlineBlock,
+  text: string,
+  startOffset: number,
+  endOffset: number,
+  suffix = ''
+): MeasuredInlineBlock {
   return {
     ...block,
+    key: suffix ? `${block.key}-${suffix}` : block.key,
     text,
-    endOffset: block.startOffset + text.length,
+    startOffset,
+    endOffset,
   }
+}
+
+function splitBlockAtLength(
+  block: MeasuredInlineBlock,
+  sliceLength: number,
+  sliceIndex: number
+): {
+  slice: MeasuredInlineBlock
+  remainder: MeasuredInlineBlock | null
+} {
+  const safeLength = Math.max(0, Math.min(sliceLength, block.text.length))
+  const sliceText = block.text.slice(0, safeLength)
+  const consumedWholeBlock = safeLength === block.text.length
+  const sliceEndOffset = consumedWholeBlock
+    ? block.endOffset
+    : block.startOffset + safeLength
+
+  const slice = cloneBlockWithText(
+    block,
+    sliceText,
+    block.startOffset,
+    sliceEndOffset,
+    `slice-${sliceIndex}`
+  )
+
+  if (consumedWholeBlock) {
+    return {
+      slice,
+      remainder: null,
+    }
+  }
+
+  return {
+    slice,
+    remainder: cloneBlockWithText(
+      block,
+      block.text.slice(safeLength),
+      block.startOffset + safeLength,
+      block.endOffset,
+      `remainder-${sliceIndex}`
+    ),
+  }
+}
+
+function findNaturalBreak(text: string, candidateLength: number): number {
+  if (candidateLength >= text.length) {
+    return candidateLength
+  }
+
+  const minimumLength = Math.max(1, Math.floor(candidateLength * 0.82))
+  const softBreakPatterns = [
+    /[。！？!?]/,
+    /[，、；;：:,.]/,
+    /\s/,
+  ]
+
+  for (let index = candidateLength; index >= minimumLength; index -= 1) {
+    const char = text[index - 1]
+
+    if (softBreakPatterns.some((pattern) => pattern.test(char))) {
+      return index
+    }
+  }
+
+  return candidateLength
+}
+
+function findLargestFittingSliceLength(
+  pageBlocks: MeasuredInlineBlock[],
+  block: MeasuredInlineBlock,
+  maxHeight: number,
+  measurer: BlockHeightMeasurer
+): number {
+  let low = 1
+  let high = block.text.length
+  let best = 0
+
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2)
+    const { slice } = splitBlockAtLength(block, middle, 0)
+    const height = measurer.measure([...pageBlocks, slice])
+
+    if (height <= maxHeight) {
+      best = middle
+      low = middle + 1
+    } else {
+      high = middle - 1
+    }
+  }
+
+  if (best <= 0) {
+    return 0
+  }
+
+  return findNaturalBreak(block.text, best)
+}
+
+function getNextContentBlock(
+  blocks: MeasuredInlineBlock[],
+  startIndex: number
+): MeasuredInlineBlock | null {
+  for (let index = startIndex; index < blocks.length; index += 1) {
+    if (blocks[index]?.kind !== 'blank') {
+      return blocks[index]
+    }
+  }
+
+  return null
+}
+
+function canKeepTitleWithNext(
+  pageBlocks: MeasuredInlineBlock[],
+  titleBlock: MeasuredInlineBlock,
+  nextBlock: MeasuredInlineBlock | null,
+  maxHeight: number,
+  measurer: BlockHeightMeasurer
+): boolean {
+  if (!nextBlock) {
+    return measurer.measure([...pageBlocks, titleBlock]) <= maxHeight
+  }
+
+  if (measurer.measure([...pageBlocks, titleBlock, nextBlock]) <= maxHeight) {
+    return true
+  }
+
+  if (nextBlock.kind !== 'paragraph') {
+    return false
+  }
+
+  const previewLength = findLargestFittingSliceLength(
+    [...pageBlocks, titleBlock],
+    nextBlock,
+    maxHeight,
+    measurer
+  )
+
+  return previewLength > 0
 }
 
 export function measureChapterPages(input: MeasureChapterPagesInput): MeasuredPage[] {
   const blocks = tokenizeChapter(input.text)
   const pages: MeasuredPage[] = []
   const maxHeight = input.layout.contentHeight
+  const measurer = createBlockMeasurer(input)
   let pageBlocks: MeasuredInlineBlock[] = []
-  let pageHeight = 0
 
   const pushPage = () => {
-    if (pageBlocks.length === 0) return
-
-    const startOffset = pageBlocks[0].startOffset
-    const endOffset = pageBlocks[pageBlocks.length - 1].endOffset
+    if (pageBlocks.length === 0) {
+      return
+    }
 
     pages.push({
       chapterIndex: input.chapterIndex,
       pageInChapter: pages.length,
-      startOffset,
-      endOffset,
-      anchorOffset: startOffset,
+      startOffset: pageBlocks[0].startOffset,
+      endOffset: pageBlocks[pageBlocks.length - 1].endOffset,
+      anchorOffset: pageBlocks[0].startOffset,
       blocks: pageBlocks,
     })
 
     pageBlocks = []
-    pageHeight = 0
   }
 
-  for (const [index, block] of blocks.entries()) {
-    const blockHeight = estimateBlockHeight(block, input.layout)
-    const keepWithNextHeight = estimateKeepWithNextHeight(blocks, index, input.layout)
-
-    if (pageHeight > 0 && block.kind === 'title' && pageHeight + keepWithNextHeight > maxHeight) {
-      pushPage()
-    }
-
-    if (blockHeight > maxHeight) {
-      let remainder = block.text
-      let remainderStartOffset = block.startOffset
+  try {
+    for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
+      let currentBlock: MeasuredInlineBlock | null = blocks[blockIndex]
       let sliceIndex = 0
 
-      while (remainder.length > 0) {
-        const availableHeight = pageHeight > 0 ? maxHeight - pageHeight : maxHeight
+      while (currentBlock) {
+        if (currentBlock.kind === 'title' && pageBlocks.length > 0) {
+          const nextBlock = getNextContentBlock(blocks, blockIndex + 1)
 
-        if (pageHeight > 0 && availableHeight <= 0) {
-          pushPage()
+          if (
+            !canKeepTitleWithNext(
+              pageBlocks,
+              currentBlock,
+              nextBlock,
+              maxHeight,
+              measurer
+            )
+          ) {
+            pushPage()
+            continue
+          }
+        }
+
+        if (measurer.measure([...pageBlocks, currentBlock]) <= maxHeight) {
+          pageBlocks.push(currentBlock)
+          currentBlock = null
           continue
         }
 
-        const slicedBlock = splitOversizedBlock(
-          {
-            ...block,
-            key: `${block.key}-slice-${sliceIndex}`,
-            text: remainder,
-            startOffset: remainderStartOffset,
-            endOffset: remainderStartOffset + remainder.length,
-          },
-          input.layout,
-          availableHeight
+        if (currentBlock.kind !== 'paragraph') {
+          if (pageBlocks.length > 0) {
+            pushPage()
+            continue
+          }
+
+          pageBlocks.push(currentBlock)
+          pushPage()
+          currentBlock = null
+          continue
+        }
+
+        const sliceLength = findLargestFittingSliceLength(
+          pageBlocks,
+          currentBlock,
+          maxHeight,
+          measurer
         )
-        const slicedBlockHeight = estimateBlockHeight(slicedBlock, input.layout)
 
-        if (pageHeight > 0 && slicedBlockHeight > availableHeight) {
+        if (sliceLength <= 0) {
+          if (pageBlocks.length > 0) {
+            pushPage()
+            continue
+          }
+
+          const emergencyLength = Math.max(1, Math.min(1, currentBlock.text.length))
+          const { slice, remainder } = splitBlockAtLength(
+            currentBlock,
+            emergencyLength,
+            sliceIndex
+          )
+          pageBlocks.push(slice)
           pushPage()
+          currentBlock = remainder
+          sliceIndex += 1
           continue
         }
 
-        pageBlocks.push(slicedBlock)
-        pageHeight += slicedBlockHeight
+        const { slice, remainder } = splitBlockAtLength(
+          currentBlock,
+          sliceLength,
+          sliceIndex
+        )
+        pageBlocks.push(slice)
         pushPage()
-
-        remainder = remainder.slice(slicedBlock.text.length)
-        remainderStartOffset = slicedBlock.endOffset
+        currentBlock = remainder
         sliceIndex += 1
       }
-
-      continue
     }
 
-    if (pageHeight > 0 && pageHeight + blockHeight > maxHeight) {
-      pushPage()
-    }
-
-    pageBlocks.push(block)
-    pageHeight += blockHeight
+    pushPage()
+    return pages
+  } finally {
+    measurer.dispose?.()
   }
-
-  pushPage()
-  return pages
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useReaderSettings } from '../../hooks/useReaderSettings';
 import { themes } from './ThemeProvider';
 import { ChevronLeft, Menu, Sun, Moon, Eye, BookOpen, Type, AlignJustify, ArrowLeft, ArrowRight, List, X, Search } from 'lucide-react';
@@ -15,6 +15,7 @@ export interface ToolbarProps {
   chapters?: Chapter[];
   onPrev?: () => void;
   onNext?: () => void;
+  onPageJump?: (pageIndex: number) => void;
   onChapterClick?: (chapter: Chapter) => void;
   show: boolean;
   currentChapterTitle?: string;
@@ -31,6 +32,7 @@ export function Toolbar({
   chapters = [],
   onPrev, 
   onNext,
+  onPageJump,
   onChapterClick,
   currentChapterTitle,
   show,
@@ -43,6 +45,7 @@ export function Toolbar({
   const [showTOC, setShowTOC] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [pageJumpValue, setPageJumpValue] = useState(String(currentPage + 1));
 
   const { data: searchData, isLoading: searchLoading, error: searchError } = useBookSearch(
     bookId,
@@ -61,46 +64,115 @@ export function Toolbar({
   const lineHeights = [1.6, 1.7, 1.8] as const;
 
   const progress = totalPages > 0 ? Math.round(((currentPage + 1) / totalPages) * 100) : 0;
-  const prevDisabled = canPrev ?? currentPage <= 0;
-  const nextDisabled = canNext ?? currentPage >= totalPages - 1;
+  const prevDisabled = canPrev != null ? !canPrev : currentPage <= 0;
+  const nextDisabled = canNext != null ? !canNext : currentPage >= totalPages - 1;
+  const isPageMode = readingMode !== 'scroll';
+  const pageSummary =
+    currentChapterTitle && isPageMode
+      ? `${currentChapterTitle} · ${Math.min(currentPage + 1, totalPages)} / ${totalPages}`
+      : `${progress}%`;
 
-  if (!show) return null;
+  useEffect(() => {
+    setPageJumpValue(String(currentPage + 1));
+  }, [currentPage]);
+
+  useEffect(() => {
+    if (!show) {
+      setShowSettings(false);
+      setShowTOC(false);
+      setShowSearch(false);
+    }
+  }, [show]);
+
+  const handlePageJumpSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!onPageJump || totalPages <= 0) {
+      return;
+    }
+
+    const trimmedValue = pageJumpValue.trim();
+    if (!/^\d+$/.test(trimmedValue)) {
+      setPageJumpValue(String(currentPage + 1));
+      return;
+    }
+
+    const parsedPage = Number(trimmedValue);
+    const clampedPage = Math.max(1, Math.min(parsedPage, totalPages));
+    setPageJumpValue(String(clampedPage));
+    onPageJump(clampedPage - 1);
+  };
 
   return (
     <>
       {/* Top Toolbar */}
-      <div className="fixed top-0 left-0 right-0 h-14 bg-white/95 dark:bg-gray-900/95 border-b border-gray-200 dark:border-gray-700 flex items-center px-4 z-50">
-        <button onClick={() => navigate('/')} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">
-          <ChevronLeft size={24} />
-        </button>
-        <h1 className="flex-1 text-center font-semibold text-lg truncate">{bookTitle}</h1>
-        <div className="flex items-center gap-1">
-          <button onClick={() => { setShowTOC(!showTOC); setShowSearch(false); }} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg" title="目录">
-            <List size={24} />
+      <div
+        className={`pointer-events-none fixed top-0 left-0 right-0 z-50 px-4 pt-3 transition-all duration-200 sm:px-6 ${
+          show ? 'translate-y-0 opacity-100' : '-translate-y-3 opacity-0'
+        }`}
+      >
+        <div
+          className="pointer-events-auto mx-auto flex h-14 max-w-5xl items-center rounded-2xl border px-3 shadow-sm backdrop-blur-xl"
+          style={{
+            backgroundColor: 'var(--reader-toolbar-bg)',
+            borderColor: 'var(--reader-toolbar-border)',
+          }}
+        >
+          <button onClick={() => navigate('/')} className="rounded-xl p-2 transition-colors hover:bg-black/5">
+            <ChevronLeft size={22} />
           </button>
-          <button onClick={() => { setShowSearch(!showSearch); setShowTOC(false); }} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg" title="搜索">
-            <Search size={24} />
-          </button>
+          <div className="min-w-0 flex-1 px-3">
+            <h1 className="truncate text-sm font-semibold tracking-[0.18em] text-[var(--text-color)]/85">
+              {bookTitle}
+            </h1>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => { setShowTOC(!showTOC); setShowSearch(false); }}
+              className="rounded-xl p-2 transition-colors hover:bg-black/5"
+              title="目录"
+            >
+              <List size={20} />
+            </button>
+            <button
+              onClick={() => { setShowSearch(!showSearch); setShowTOC(false); }}
+              className="rounded-xl p-2 transition-colors hover:bg-black/5"
+              title="搜索"
+            >
+              <Search size={20} />
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Bottom Toolbar */}
-      <div className="fixed bottom-0 left-0 right-0 h-16 bg-white/95 dark:bg-gray-900/95 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between px-4 z-50">
-        <span className="text-sm text-gray-600 dark:text-gray-400">
-          {readingMode === 'scroll' && currentChapterTitle
-            ? currentChapterTitle
-            : `${progress}%`}
-        </span>
-        
-        <div className="flex items-center gap-2">
+      <div
+        className={`pointer-events-none fixed bottom-0 left-0 right-0 z-50 px-4 pb-3 transition-all duration-200 sm:px-6 ${
+          show ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'
+        }`}
+      >
+        <div
+          className="pointer-events-auto mx-auto flex min-h-16 max-w-5xl items-center justify-between gap-3 rounded-[22px] border px-4 py-3 shadow-sm backdrop-blur-xl"
+          style={{
+            backgroundColor: 'var(--reader-toolbar-bg)',
+            borderColor: 'var(--reader-toolbar-border)',
+          }}
+        >
+          <div className="min-w-0">
+            <span className="block truncate text-sm text-[var(--text-color)]/78">
+              {pageSummary}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
           {/* Font Size */}
           <div className="hidden sm:flex items-center gap-1 mr-4">
-            <Type size={16} className="text-gray-500" />
+            <Type size={16} className="text-[var(--text-color)]/55" />
             {fontSizes.map(size => (
               <button
                 key={size}
                 onClick={() => setFontSize(size)}
-                className={`w-8 h-8 rounded flex items-center justify-center text-xs ${fontSize === size ? 'bg-blue-500 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-xs transition-colors ${fontSize === size ? 'bg-black/80 text-white' : 'hover:bg-black/5'}`}
               >
                 {size}
               </button>
@@ -113,7 +185,7 @@ export function Toolbar({
               <button
                 key={t}
                 onClick={() => setTheme(t)}
-                className={`w-8 h-8 rounded flex items-center justify-center ${theme === t ? 'bg-blue-500 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+                className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${theme === t ? 'bg-black/80 text-white' : 'hover:bg-black/5'}`}
                 style={theme === t ? {} : { backgroundColor: themes[t].bg, color: themes[t].text }}
                 title={themes[t].name}
               >
@@ -125,37 +197,72 @@ export function Toolbar({
           {/* Menu Button */}
           <button
             onClick={() => setShowSettings(!showSettings)}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+            className="rounded-xl p-2 transition-colors hover:bg-black/5"
             title="设置"
           >
             <Menu size={24} />
           </button>
 
           {/* Navigation */}
-          {readingMode !== 'scroll' && (
+          {isPageMode && (
             <>
               <button
                 onClick={onPrev}
                 disabled={prevDisabled}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg disabled:opacity-50"
+                aria-label="上一页"
+                className="rounded-xl p-2 transition-colors hover:bg-black/5 disabled:opacity-50"
               >
                 <ArrowLeft size={24} />
               </button>
               <button
                 onClick={onNext}
                 disabled={nextDisabled}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg disabled:opacity-50"
+                aria-label="下一页"
+                className="rounded-xl p-2 transition-colors hover:bg-black/5 disabled:opacity-50"
               >
                 <ArrowRight size={24} />
               </button>
+              {onPageJump && totalPages > 0 && (
+                <form onSubmit={handlePageJumpSubmit} className="ml-2 flex items-center gap-2">
+                  <span className="whitespace-nowrap text-xs text-[var(--text-color)]/55">
+                    {currentPage + 1} / {totalPages}
+                  </span>
+                  <input
+                    aria-label="跳转到页码"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={pageJumpValue}
+                    onChange={(event) => setPageJumpValue(event.target.value)}
+                    className="w-14 rounded-full border px-2 py-1 text-sm"
+                    style={{
+                      borderColor: 'var(--reader-toolbar-border)',
+                      backgroundColor: 'color-mix(in srgb, var(--reader-toolbar-bg) 78%, white 22%)',
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    aria-label="跳转页码"
+                    className="rounded-full px-3 py-1 text-sm transition-colors hover:bg-black/5"
+                  >
+                    跳转
+                  </button>
+                </form>
+              )}
             </>
           )}
         </div>
       </div>
+      </div>
 
       {/* Settings Panel */}
-      {showSettings && (
-        <div className="fixed bottom-16 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 p-4 z-40 shadow-lg">
+      {show && showSettings && (
+        <div
+          className="fixed bottom-20 left-4 right-4 z-40 rounded-[24px] border p-4 shadow-lg backdrop-blur-xl sm:left-6 sm:right-6"
+          style={{
+            backgroundColor: 'var(--reader-toolbar-bg)',
+            borderColor: 'var(--reader-toolbar-border)',
+          }}
+        >
           <div className="max-w-2xl mx-auto space-y-4">
             {/* Font Size */}
             <div>

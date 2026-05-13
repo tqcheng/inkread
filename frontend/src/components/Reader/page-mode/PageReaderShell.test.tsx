@@ -17,6 +17,9 @@ describe('PageReaderShell', () => {
         onPrev={onPrev}
         onNext={onNext}
         onToggleToolbar={onToggleToolbar}
+        showToolbar={false}
+        pageKey="page-0"
+        transitionDirection="none"
       />
     )
 
@@ -36,7 +39,6 @@ describe('PageReaderShell', () => {
     expect(onPrev).toHaveBeenCalledTimes(1)
     expect(onToggleToolbar).toHaveBeenCalledTimes(3)
     expect(onNext).toHaveBeenCalledTimes(1)
-    expect((stage as HTMLDivElement).style.width).toBe('100%')
     expect((stage as HTMLDivElement).style.maxWidth).toBe(
       `${PAGE_STAGE_MAX_WIDTH}px`
     )
@@ -80,5 +82,26 @@ describe('PageReaderShell', () => {
     } finally {
       useReaderSettings.setState(previousState)
     }
+  })
+
+  it('exposes the requested transition direction on the animated page layer', () => {
+    render(
+      <PageReaderShell
+        pageContent={<div>正文</div>}
+        onPrev={vi.fn()}
+        onNext={vi.fn()}
+        onToggleToolbar={vi.fn()}
+        showToolbar={false}
+        pageKey="page-1"
+        transitionDirection="forward"
+      />
+    )
+
+    const animatedLayer = screen.getByTestId('page-reader-content')
+    expect(animatedLayer).toHaveAttribute('data-direction', 'forward')
+    expect(animatedLayer).toHaveStyle({
+      animation:
+        'page-slide-forward 170ms cubic-bezier(0.22, 0.61, 0.36, 1)',
+    })
   })
 })

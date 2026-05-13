@@ -27,6 +27,8 @@ interface PageAnchorRequest {
   value?: number;
 }
 
+type PageTransitionDirection = 'forward' | 'backward' | 'none';
+
 // Book progress is persisted as book-global byte offsets, while the page controller
 // reads chapter-local character offsets. This converts bytes -> chars for restore/jumps.
 function byteOffsetToCharIndex(text: string, byteOffset: number): number {
@@ -135,6 +137,8 @@ export default function Reader() {
   }));
   const [pageInitialAnchor, setPageInitialAnchor] = useState(0);
   const [pageAnchorRequest, setPageAnchorRequest] = useState<PageAnchorRequest | null>(null);
+  const [pageTransitionDirection, setPageTransitionDirection] =
+    useState<PageTransitionDirection>('none');
 
   const { token, isEnabled, isLoading: authLoading, checkStatus } = useAuth();
 
@@ -259,6 +263,15 @@ export default function Reader() {
   ]);
 
   const queuePageAnchorRequest = useCallback((request: PageAnchorRequest) => {
+    setPageTransitionDirection((previousDirection) => {
+      if (request.chapterIndex > currentChapterIndex) {
+        return 'forward';
+      }
+      if (request.chapterIndex < currentChapterIndex) {
+        return 'backward';
+      }
+      return previousDirection;
+    });
     setCurrentChapterIndex(request.chapterIndex);
     setPageAnchorRequest(request);
 
@@ -267,12 +280,15 @@ export default function Reader() {
     } else if (request.kind === 'start') {
       setPageInitialAnchor(0);
     }
-  }, []);
+  }, [currentChapterIndex]);
 
   const handlePagePrev = useCallback(() => {
     if (!isPageMode) {
       return;
     }
+
+    setShowToolbar(false);
+    setPageTransitionDirection('backward');
 
     if (currentPageIndex > 0) {
       setCurrentPageIndex(currentPageIndex - 1);
@@ -291,6 +307,9 @@ export default function Reader() {
     if (!isPageMode) {
       return;
     }
+
+    setShowToolbar(false);
+    setPageTransitionDirection('forward');
 
     if (currentPageIndex >= 0 && currentPageIndex < chapterPages.length - 1) {
       setCurrentPageIndex(currentPageIndex + 1);
@@ -312,6 +331,16 @@ export default function Reader() {
     queuePageAnchorRequest,
     setCurrentPageIndex,
   ]);
+
+  const handlePageJump = useCallback((pageIndex: number) => {
+    if (!isPageMode || chapterPages.length === 0) {
+      return;
+    }
+
+    setPageTransitionDirection(pageIndex >= currentPageIndex ? 'forward' : 'backward');
+    const clampedPageIndex = Math.max(0, Math.min(pageIndex, chapterPages.length - 1));
+    setCurrentPageIndex(clampedPageIndex);
+  }, [chapterPages.length, currentPageIndex, isPageMode, setCurrentPageIndex]);
 
   useEffect(() => {
     if (!initialRestoreRef.current || !book?.chapters?.length) return;
@@ -551,6 +580,9 @@ export default function Reader() {
     const nextChapterIndex = chapterIndex >= 0 ? chapterIndex : 0;
 
     if (isPageMode) {
+      setPageTransitionDirection(
+        nextChapterIndex >= currentChapterIndex ? 'forward' : 'backward'
+      );
       queuePageAnchorRequest({
         chapterIndex: nextChapterIndex,
         kind: 'start',
@@ -572,6 +604,9 @@ export default function Reader() {
     const targetChapter = book.chapters[targetChapterIndex];
 
     if (isPageMode) {
+      setPageTransitionDirection(
+        targetChapterIndex >= currentChapterIndex ? 'forward' : 'backward'
+      );
       queuePageAnchorRequest({
         chapterIndex: targetChapterIndex,
         kind: 'byte',
@@ -631,6 +666,9 @@ export default function Reader() {
   const canPageNext =
     (currentPageIndex >= 0 && currentPageIndex < chapterPages.length - 1) ||
     currentChapterIndex < (book.chapters?.length || 0) - 1;
+  const currentPageKey = currentPage
+    ? `${currentPage.chapterIndex}-${currentPage.pageInChapter}-${currentPage.startOffset}-${currentPage.endOffset}`
+    : `empty-${currentChapterIndex}`;
 
   return (
     <ThemeProvider>
@@ -653,6 +691,7 @@ export default function Reader() {
           chapters={book.chapters || []}
           onPrev={handlePagePrev}
           onNext={handlePageNext}
+          onPageJump={isPageMode ? handlePageJump : undefined}
           onChapterClick={handleChapterClick}
           show={showToolbar}
           bookTitle={book.title}
@@ -667,6 +706,9 @@ export default function Reader() {
             onPrev={handlePagePrev}
             onNext={handlePageNext}
             onToggleToolbar={() => setShowToolbar((previous) => !previous)}
+            showToolbar={showToolbar}
+            pageKey={currentPageKey}
+            transitionDirection={pageTransitionDirection}
           />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr min(65%, 768px) 1fr', minHeight: '100vh' }}>

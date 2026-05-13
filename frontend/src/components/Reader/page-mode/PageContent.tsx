@@ -22,7 +22,7 @@ function renderHighlightedText(text: string, highlight: string): ReactNode {
       <mark
         key={`${part}-${index}`}
         style={{
-          backgroundColor: '#fbbf24',
+          backgroundColor: 'var(--reader-highlight)',
           borderRadius: '2px',
           padding: '0 1px',
         }}
@@ -46,18 +46,29 @@ export function PageContent({ page, highlight }: PageContentProps) {
         padding: `${PAGE_VERTICAL_PADDING}px ${PAGE_HORIZONTAL_PADDING}px`,
         fontSize: `${fontSize}px`,
         lineHeight: `${lineHeight}`,
+        fontFamily:
+          '"Iowan Old Style", "Palatino Linotype", "Noto Serif SC", "Songti SC", serif',
+        textRendering: 'optimizeLegibility',
+        WebkitFontSmoothing: 'antialiased',
       }}
     >
       {page.blocks.map((block) => (
         <p
           key={block.key}
-          className="whitespace-pre-wrap"
+          className="whitespace-pre-wrap transition-colors duration-150"
           style={{
             margin: `0 0 ${PAGE_PARAGRAPH_GAP}px 0`,
             textAlign: block.kind === 'title' ? 'center' : 'left',
             fontSize:
               block.kind === 'title' ? `${PAGE_TITLE_FONT_SCALE}em` : undefined,
             fontWeight: block.kind === 'title' ? 600 : undefined,
+            letterSpacing: block.kind === 'title' ? '0.04em' : '0.01em',
+            color:
+              block.kind === 'title'
+                ? 'color-mix(in srgb, var(--text-color) 92%, black 8%)'
+                : 'var(--text-color)',
+            textIndent: block.kind === 'title' ? 0 : '1.8em',
+            opacity: block.kind === 'title' ? 0.96 : 1,
           }}
         >
           {highlight && block.text

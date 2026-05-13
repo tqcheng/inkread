@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import {
   getPageLayoutMetrics,
   PAGE_PARAGRAPH_GAP,
@@ -16,30 +16,42 @@ export function usePageReaderController(params: {
   initialAnchor: number
 }) {
   const [anchorOffset, setAnchorOffset] = useState(params.initialAnchor)
+  const [pages, setPages] = useState(() =>
+    measureChapterPages({
+      chapterIndex: params.chapterIndex,
+      text: params.chapterText,
+      layout: {
+        viewportWidth: params.viewportWidth,
+        viewportHeight: params.viewportHeight,
+        contentWidth: getPageLayoutMetrics(params.viewportWidth, params.viewportHeight)
+          .contentWidth,
+        contentHeight: getPageLayoutMetrics(
+          params.viewportWidth,
+          params.viewportHeight
+        ).contentHeight,
+        fontSize: params.fontSize,
+        lineHeight: params.lineHeight,
+        paragraphGap: PAGE_PARAGRAPH_GAP,
+      },
+    })
+  )
 
   const layoutMetrics = useMemo(
     () => getPageLayoutMetrics(params.viewportWidth, params.viewportHeight),
     [params.viewportWidth, params.viewportHeight]
   )
 
-  const pages = useMemo(
-    () =>
-      measureChapterPages({
-        chapterIndex: params.chapterIndex,
-        text: params.chapterText,
-        layout: {
-          viewportWidth: params.viewportWidth,
-          viewportHeight: params.viewportHeight,
-          contentWidth: layoutMetrics.contentWidth,
-          contentHeight: layoutMetrics.contentHeight,
-          fontSize: params.fontSize,
-          lineHeight: params.lineHeight,
-          paragraphGap: PAGE_PARAGRAPH_GAP,
-        },
-      }),
+  const paginationLayout = useMemo(
+    () => ({
+      viewportWidth: params.viewportWidth,
+      viewportHeight: params.viewportHeight,
+      contentWidth: layoutMetrics.contentWidth,
+      contentHeight: layoutMetrics.contentHeight,
+      fontSize: params.fontSize,
+      lineHeight: params.lineHeight,
+      paragraphGap: PAGE_PARAGRAPH_GAP,
+    }),
     [
-      params.chapterIndex,
-      params.chapterText,
       layoutMetrics.contentHeight,
       layoutMetrics.contentWidth,
       params.fontSize,
@@ -48,6 +60,16 @@ export function usePageReaderController(params: {
       params.viewportWidth,
     ]
   )
+
+  useLayoutEffect(() => {
+    setPages(
+      measureChapterPages({
+        chapterIndex: params.chapterIndex,
+        text: params.chapterText,
+        layout: paginationLayout,
+      })
+    )
+  }, [params.chapterIndex, params.chapterText, paginationLayout])
 
   useEffect(() => {
     setAnchorOffset(params.initialAnchor)

@@ -158,4 +158,50 @@ describe('measureChapterPages', () => {
       )
     ).toBe(true)
   })
+
+  it('fills remaining page space by slicing a paragraph that would otherwise leave a large gap', () => {
+    const pages = measureChapterPages({
+      chapterIndex: 7,
+      text: `${'a'.repeat(30)}\n${'b'.repeat(40)}`,
+      layout: {
+        viewportWidth: 400,
+        viewportHeight: 300,
+        contentWidth: 100,
+        contentHeight: 50,
+        fontSize: 10,
+        lineHeight: 1,
+        paragraphGap: 0,
+      },
+    })
+
+    expect(pages).toHaveLength(2)
+    expect(pages[0]?.blocks).toHaveLength(2)
+    expect(pages[0]?.blocks[1]?.text.length).toBeGreaterThan(0)
+    expect(pages[0]?.blocks[1]?.text.length).toBeLessThan(40)
+  })
+
+  it('keeps paragraph slices continuous when a normal paragraph is split across pages', () => {
+    const secondParagraph = 'b'.repeat(40)
+    const pages = measureChapterPages({
+      chapterIndex: 8,
+      text: `${'a'.repeat(30)}\n${secondParagraph}`,
+      layout: {
+        viewportWidth: 400,
+        viewportHeight: 300,
+        contentWidth: 100,
+        contentHeight: 50,
+        fontSize: 10,
+        lineHeight: 1,
+        paragraphGap: 0,
+      },
+    })
+
+    const combinedSecondParagraph = pages
+      .flatMap((page) => page.blocks)
+      .filter((block) => block.text.includes('b'))
+      .map((block) => block.text)
+      .join('')
+
+    expect(combinedSecondParagraph).toBe(secondParagraph)
+  })
 })
