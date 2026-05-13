@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
+import {
+  getPageLayoutMetrics,
+  PAGE_PARAGRAPH_GAP,
+} from './layout'
 import { findPageForAnchor } from './pagination/findPageForAnchor'
 import { measureChapterPages } from './pagination/measureChapterPages'
 
@@ -13,6 +17,11 @@ export function usePageReaderController(params: {
 }) {
   const [anchorOffset, setAnchorOffset] = useState(params.initialAnchor)
 
+  const layoutMetrics = useMemo(
+    () => getPageLayoutMetrics(params.viewportWidth, params.viewportHeight),
+    [params.viewportWidth, params.viewportHeight]
+  )
+
   const pages = useMemo(
     () =>
       measureChapterPages({
@@ -21,20 +30,22 @@ export function usePageReaderController(params: {
         layout: {
           viewportWidth: params.viewportWidth,
           viewportHeight: params.viewportHeight,
-          contentWidth: Math.min(720, params.viewportWidth - 96),
-          contentHeight: Math.max(320, params.viewportHeight - 160),
+          contentWidth: layoutMetrics.contentWidth,
+          contentHeight: layoutMetrics.contentHeight,
           fontSize: params.fontSize,
           lineHeight: params.lineHeight,
-          paragraphGap: 16,
+          paragraphGap: PAGE_PARAGRAPH_GAP,
         },
       }),
     [
       params.chapterIndex,
       params.chapterText,
-      params.viewportWidth,
-      params.viewportHeight,
+      layoutMetrics.contentHeight,
+      layoutMetrics.contentWidth,
       params.fontSize,
       params.lineHeight,
+      params.viewportHeight,
+      params.viewportWidth,
     ]
   )
 

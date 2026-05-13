@@ -1,4 +1,9 @@
 import type { ReactNode } from 'react'
+import {
+  PAGE_BOTTOM_CHROME_HEIGHT,
+  PAGE_STAGE_MAX_WIDTH,
+  PAGE_TOP_CHROME_HEIGHT,
+} from './layout'
 
 interface PageReaderShellProps {
   pageContent: ReactNode
@@ -14,11 +19,16 @@ export function PageReaderShell({
   onToggleToolbar,
 }: PageReaderShellProps) {
   return (
-    <div className="grid h-screen grid-cols-[1fr_minmax(720px,820px)_1fr] bg-[var(--bg-color-side)]">
-      <div />
+    <div className="flex h-screen justify-center bg-[var(--bg-color-side)]">
       <div
         data-testid="page-reader-stage"
-        className="relative h-screen pb-16 pt-14"
+        className="relative h-screen"
+        style={{
+          width: '100%',
+          maxWidth: `${PAGE_STAGE_MAX_WIDTH}px`,
+          paddingTop: `${PAGE_TOP_CHROME_HEIGHT}px`,
+          paddingBottom: `${PAGE_BOTTOM_CHROME_HEIGHT}px`,
+        }}
         onClick={(event) => {
           const rect = event.currentTarget.getBoundingClientRect()
           const x = event.clientX - rect.left
@@ -39,7 +49,6 @@ export function PageReaderShell({
       >
         <div className="h-full shadow-sm">{pageContent}</div>
       </div>
-      <div />
     </div>
   )
 }
