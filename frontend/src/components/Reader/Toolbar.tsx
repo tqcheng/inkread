@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import type { Chapter, BookSearchResult } from '../../api/types';
 import { useBookSearch } from '../../hooks/useBookSearch';
 
-interface ToolbarProps {
+export interface ToolbarProps {
   bookTitle?: string;
   currentPage?: number;
   totalPages?: number;
