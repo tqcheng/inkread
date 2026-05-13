@@ -302,6 +302,23 @@ class TestBookContentEndpoint:
         assert data["is_end"] is True
 
     @pytest.mark.asyncio
+    async def test_get_book_content_by_chapter_index_ignores_large_limit(
+        self, async_client, db_session, tmp_path
+    ):
+        """Test chapter_index requests bypass offset/limit validation semantics."""
+        book, chapter_text = await self._create_book_with_chapters(db_session, tmp_path)
+
+        response = await async_client.get(
+            f"/api/v1/books/{book.id}/content?chapter_index=1&limit=999999"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["content"] == chapter_text
+        assert data["next_offset"] is None
+        assert data["is_end"] is True
+
+    @pytest.mark.asyncio
     async def test_get_book_content_by_missing_chapter_index_returns_404(
         self, async_client, db_session, tmp_path
     ):

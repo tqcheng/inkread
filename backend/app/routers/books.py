@@ -146,7 +146,7 @@ async def get_book(
 async def get_book_content(
     book_id: int,
     offset: int = Query(0, ge=0, description="Byte offset"),
-    limit: int = Query(10000, ge=1, le=200000, description="Max characters"),
+    limit: int = Query(10000, ge=1, description="Max characters"),
     chapter_index: int | None = Query(None, ge=0, description="Chapter index (overrides offset/limit)"),
     db: AsyncSession = Depends(get_db),
 ):
