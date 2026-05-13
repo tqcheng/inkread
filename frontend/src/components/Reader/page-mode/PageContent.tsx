@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useReaderSettings } from '../../../hooks/useReaderSettings'
 import {
   PAGE_HORIZONTAL_PADDING,
   PAGE_PARAGRAPH_GAP,
@@ -35,12 +36,16 @@ function renderHighlightedText(text: string, highlight: string): ReactNode {
 }
 
 export function PageContent({ page, highlight }: PageContentProps) {
+  const { fontSize, lineHeight } = useReaderSettings()
+
   return (
     <div
       className="h-full w-full bg-[var(--bg-color)] text-[var(--text-color)]"
       style={{
         boxSizing: 'border-box',
         padding: `${PAGE_VERTICAL_PADDING}px ${PAGE_HORIZONTAL_PADDING}px`,
+        fontSize: `${fontSize}px`,
+        lineHeight: `${lineHeight}`,
       }}
     >
       {page.blocks.map((block) => (
