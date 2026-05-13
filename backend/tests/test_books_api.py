@@ -3,7 +3,7 @@
 import pytest
 from httpx import AsyncClient
 
-from app.models import Book
+from app.models import Book, Chapter
 
 
 class TestBooksListEndpoint:
@@ -184,6 +184,62 @@ class TestBookDetailEndpoint:
 class TestBookContentEndpoint:
     """Test GET /api/v1/books/{book_id}/content endpoint."""
 
+    @staticmethod
+    async def _create_book_with_chapters(db_session, tmp_path):
+        prefix_text = "前言\n"
+        chapter_text = "章节开始\n" + ("你" * 70000) + "\n章节结束"
+        suffix_text = "\n尾声"
+
+        file_bytes = (
+            prefix_text.encode("utf-8")
+            + chapter_text.encode("utf-8")
+            + suffix_text.encode("utf-8")
+        )
+        test_file = tmp_path / "chaptered-api.txt"
+        test_file.write_bytes(file_bytes)
+
+        prefix_bytes = prefix_text.encode("utf-8")
+        chapter_bytes = chapter_text.encode("utf-8")
+
+        book = Book(
+            title="接口分章测试",
+            filename="chaptered-api.txt",
+            file_path=str(test_file),
+            file_size=len(file_bytes),
+        )
+        db_session.add(book)
+        await db_session.flush()
+
+        db_session.add_all(
+            [
+                Chapter(
+                    book_id=book.id,
+                    title="前言",
+                    position_start=0,
+                    position_end=len(prefix_bytes),
+                    chapter_index=0,
+                ),
+                Chapter(
+                    book_id=book.id,
+                    title="正文",
+                    position_start=len(prefix_bytes),
+                    position_end=len(prefix_bytes) + len(chapter_bytes),
+                    chapter_index=1,
+                ),
+                Chapter(
+                    book_id=book.id,
+                    title="尾声",
+                    position_start=len(prefix_bytes) + len(chapter_bytes),
+                    position_end=None,
+                    chapter_index=2,
+                ),
+            ]
+        )
+        await db_session.commit()
+        await db_session.refresh(book)
+
+        return book, chapter_text
+
     @pytest.mark.asyncio
     async def test_get_book_content(self, async_client, db_session, tmp_path):
         """Test getting book content."""
@@ -226,6 +282,36 @@ class TestBookContentEndpoint:
     async def test_get_book_content_not_found(self, async_client):
         """Test 404 for non-existent book content."""
         response = await async_client.get("/api/v1/books/9999/content")
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_book_content_by_chapter_index(
+        self, async_client, db_session, tmp_path
+    ):
+        """Test chapter_index endpoint returns a full middle chapter."""
+        book, chapter_text = await self._create_book_with_chapters(db_session, tmp_path)
+
+        response = await async_client.get(
+            f"/api/v1/books/{book.id}/content?chapter_index=1"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["content"] == chapter_text
+        assert data["next_offset"] is None
+        assert data["is_end"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_book_content_by_missing_chapter_index_returns_404(
+        self, async_client, db_session, tmp_path
+    ):
+        """Test chapter_index endpoint returns 404 for an unknown chapter."""
+        book, _ = await self._create_book_with_chapters(db_session, tmp_path)
+
+        response = await async_client.get(
+            f"/api/v1/books/{book.id}/content?chapter_index=99"
+        )
+
         assert response.status_code == 404
 
 

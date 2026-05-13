@@ -6,11 +6,67 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from app.services.content import get_book_content, update_reading_progress
-from app.models import Book, ReadingProgress
+from app.models import Book, Chapter, ReadingProgress
 
 
 class TestGetBookContent:
     """Test get_book_content function."""
+
+    @staticmethod
+    async def _create_book_with_chapters(db_session, tmp_path):
+        prefix_text = "前言\n"
+        chapter_text = "章节开始\n" + ("你" * 70000) + "\n章节结束"
+        suffix_text = "\n尾声"
+
+        file_bytes = (
+            prefix_text.encode("utf-8")
+            + chapter_text.encode("utf-8")
+            + suffix_text.encode("utf-8")
+        )
+        test_file = tmp_path / "chaptered.txt"
+        test_file.write_bytes(file_bytes)
+
+        prefix_bytes = prefix_text.encode("utf-8")
+        chapter_bytes = chapter_text.encode("utf-8")
+
+        book = Book(
+            title="分章测试",
+            filename="chaptered.txt",
+            file_path=str(test_file),
+            file_size=len(file_bytes),
+        )
+        db_session.add(book)
+        await db_session.flush()
+
+        db_session.add_all(
+            [
+                Chapter(
+                    book_id=book.id,
+                    title="前言",
+                    position_start=0,
+                    position_end=len(prefix_bytes),
+                    chapter_index=0,
+                ),
+                Chapter(
+                    book_id=book.id,
+                    title="正文",
+                    position_start=len(prefix_bytes),
+                    position_end=len(prefix_bytes) + len(chapter_bytes),
+                    chapter_index=1,
+                ),
+                Chapter(
+                    book_id=book.id,
+                    title="尾声",
+                    position_start=len(prefix_bytes) + len(chapter_bytes),
+                    position_end=None,
+                    chapter_index=2,
+                ),
+            ]
+        )
+        await db_session.commit()
+        await db_session.refresh(book)
+
+        return book, chapter_text
 
     @pytest.mark.asyncio
     async def test_get_book_content_basic(self, db_session, tmp_path):
@@ -83,6 +139,35 @@ class TestGetBookContent:
 
         with pytest.raises(HTTPException) as exc_info:
             await get_book_content(book.id, 0, 1000, db_session)
+
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_book_content_by_chapter_index_returns_full_middle_chapter(
+        self, db_session, tmp_path
+    ):
+        """Test chapter mode returns the complete middle chapter beyond 200000 bytes."""
+        book, chapter_text = await self._create_book_with_chapters(db_session, tmp_path)
+
+        result = await get_book_content(book.id, 0, 1000, db_session, chapter_index=1)
+
+        assert result["content"] == chapter_text
+        assert result["content"].startswith("章节开始")
+        assert result["content"].endswith("章节结束")
+        assert "前言" not in result["content"]
+        assert "尾声" not in result["content"]
+        assert result["next_offset"] is None
+        assert result["is_end"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_book_content_missing_chapter_index_raises_404(
+        self, db_session, tmp_path
+    ):
+        """Test missing chapter_index returns 404 instead of falling back to book start."""
+        book, _ = await self._create_book_with_chapters(db_session, tmp_path)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_book_content(book.id, 0, 1000, db_session, chapter_index=99)
 
         assert exc_info.value.status_code == 404
 

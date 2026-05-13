@@ -26,7 +26,7 @@ async def get_book_content(
     Returns:
         dict: {content, next_offset, total_size, is_end}
     """
-    if limit > 200000:
+    if chapter_index is None and limit > 200000:
         raise HTTPException(status_code=400, detail="limit 最大为 200000")
 
     result = await db_session.execute(
@@ -43,20 +43,31 @@ async def get_book_content(
 
     file_size = file_path.stat().st_size
 
-    # If chapter_index is provided, read that chapter's exact range
     if chapter_index is not None:
         ch_result = await db_session.execute(
             select(Chapter)
             .where(Chapter.book_id == book_id, Chapter.chapter_index == chapter_index)
         )
         chapter = ch_result.scalar_one_or_none()
-        if chapter:
-            offset = chapter.position_start
-            limit = min(chapter.position_end - chapter.position_start, 200000) if chapter.position_end else 200000
-        else:
-            # Chapter not found, fall back to offset/limit with safe defaults
-            offset = 0
-            limit = 200000
+        if not chapter:
+            raise HTTPException(status_code=404, detail="章节不存在")
+
+        async with aiofiles.open(file_path, "rb") as f:
+            await f.seek(chapter.position_start)
+
+            if chapter.position_end is None:
+                raw_bytes = await f.read()
+            else:
+                raw_bytes = await f.read(chapter.position_end - chapter.position_start)
+
+        content = raw_bytes.decode("utf-8", errors="ignore")
+
+        return {
+            "content": content,
+            "next_offset": None,
+            "total_size": file_size,
+            "is_end": True,
+        }
 
     async with aiofiles.open(file_path, "rb") as f:
         await f.seek(offset)

@@ -2,75 +2,51 @@ import { useQueries } from '@tanstack/react-query'
 import { booksApi } from '../api/books'
 import type { Chapter } from '../api/types'
 
-const MAX_CHUNK_SIZE = 200000
-
-async function fetchChapterContent(bookId: number, chapter: Chapter): Promise<string> {
-  const startOffset = chapter.position_start
-  const endOffset = chapter.position_end
-  let nextOffset: number | null = startOffset
-  let content = ''
-
-  while (nextOffset !== null) {
-    const remaining = endOffset === null ? MAX_CHUNK_SIZE : endOffset - nextOffset
-
-    if (remaining <= 0) {
-      break
-    }
-
-    const response = await booksApi.getBookContent(
-      bookId,
-      nextOffset,
-      Math.min(MAX_CHUNK_SIZE, remaining)
-    )
-
-    content += response.content
-
-    if (endOffset !== null) {
-      if (response.next_offset !== null && response.next_offset >= endOffset) {
-        break
-      }
-    }
-
-    if (response.next_offset === null || response.is_end) {
-      break
-    }
-
-    nextOffset = response.next_offset
-  }
-
-  return content
+interface PageChapterContentState {
+  contentByIndex: Record<number, string>
+  errorsByIndex: Record<number, string | null>
 }
 
 export function usePageChapterContent(
   bookId: number,
   chapters: Chapter[],
   chapterIndex: number
-) {
-  const activeChapters = [chapterIndex - 1, chapterIndex, chapterIndex + 1]
-    .map((index) => chapters[index])
-    .filter((chapter): chapter is Chapter => Boolean(chapter) && chapter.chapter_index !== null)
+): PageChapterContentState {
+  const activeIndexes = [chapterIndex - 1, chapterIndex, chapterIndex + 1].filter(
+    (index) => index >= 0 && index < chapters.length
+  )
 
   const results = useQueries({
-    queries: activeChapters.map((chapter) => ({
-      queryKey: [
-        'pageChapterContent',
-        bookId,
-        chapter.id,
-        chapter.chapter_index,
-        chapter.position_start,
-        chapter.position_end,
-      ],
-      queryFn: () => fetchChapterContent(bookId, chapter),
+    queries: activeIndexes.map((index) => ({
+      queryKey: ['pageChapterContent', bookId, index, chapters[index]?.chapter_index],
+      queryFn: async () => {
+        const chapter = chapters[index]
+
+        if (!chapter) {
+          return ''
+        }
+
+        if (chapter.chapter_index === null) {
+          throw new Error(`Chapter at array index ${index} is missing chapter_index metadata`)
+        }
+
+        const response = await booksApi.getBookContent(bookId, 0, 10000, chapter.chapter_index)
+        return response.content
+      },
       staleTime: 5 * 60 * 1000,
     })),
   })
 
-  return activeChapters.reduce<Record<number, string>>((acc, chapter, resultIndex) => {
-    if (chapter.chapter_index === null) {
+  return activeIndexes.reduce<PageChapterContentState>(
+    (acc, index, resultIndex) => {
+      acc.contentByIndex[index] = results[resultIndex].data ?? ''
+      acc.errorsByIndex[index] =
+        results[resultIndex].error instanceof Error ? results[resultIndex].error.message : null
       return acc
+    },
+    {
+      contentByIndex: {},
+      errorsByIndex: {},
     }
-
-    acc[chapter.chapter_index] = results[resultIndex].data ?? ''
-    return acc
-  }, {})
+  )
 }
