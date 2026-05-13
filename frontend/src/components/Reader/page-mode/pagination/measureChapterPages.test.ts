@@ -62,6 +62,29 @@ describe('measureChapterPages', () => {
     expect(titlePage?.blocks.some((block) => block.kind === 'paragraph')).toBe(true)
   })
 
+  it('keeps a title with its spacer line and following paragraph', () => {
+    const pages = measureChapterPages({
+      chapterIndex: 9,
+      text: 'a'.repeat(15) + '\nChapter 2\n\nb',
+      layout: {
+        viewportWidth: 920,
+        viewportHeight: 760,
+        contentWidth: 180,
+        contentHeight: 160,
+        fontSize: 18,
+        lineHeight: 1.7,
+        paragraphGap: 16,
+      },
+    })
+
+    const titlePage = pages.find((page) => page.blocks.some((block) => block.kind === 'title'))
+
+    expect(titlePage).toBeDefined()
+    expect(titlePage?.blocks.map((block) => block.kind)).toEqual(
+      expect.arrayContaining(['title', 'blank', 'paragraph'])
+    )
+  })
+
   it('keeps oversized paragraph slices within the page height budget', () => {
     const layout = {
       viewportWidth: 920,

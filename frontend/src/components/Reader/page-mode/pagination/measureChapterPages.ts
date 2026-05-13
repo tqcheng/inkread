@@ -180,41 +180,53 @@ function findLargestFittingSliceLength(
   return findNaturalBreak(block.text, best)
 }
 
-function getNextContentBlock(
+function getKeepWithNextBlocks(
   blocks: MeasuredInlineBlock[],
   startIndex: number
-): MeasuredInlineBlock | null {
+): MeasuredInlineBlock[] {
+  const keepBlocks: MeasuredInlineBlock[] = []
+
   for (let index = startIndex; index < blocks.length; index += 1) {
-    if (blocks[index]?.kind !== 'blank') {
-      return blocks[index]
+    const nextBlock = blocks[index]
+
+    if (!nextBlock) {
+      break
+    }
+
+    keepBlocks.push(nextBlock)
+
+    if (nextBlock.kind !== 'blank') {
+      break
     }
   }
 
-  return null
+  return keepBlocks
 }
 
 function canKeepTitleWithNext(
   pageBlocks: MeasuredInlineBlock[],
   titleBlock: MeasuredInlineBlock,
-  nextBlock: MeasuredInlineBlock | null,
+  nextBlocks: MeasuredInlineBlock[],
   maxHeight: number,
   measurer: BlockHeightMeasurer
 ): boolean {
-  if (!nextBlock) {
+  if (nextBlocks.length === 0) {
     return measurer.measure([...pageBlocks, titleBlock]) <= maxHeight
   }
 
-  if (measurer.measure([...pageBlocks, titleBlock, nextBlock]) <= maxHeight) {
+  if (measurer.measure([...pageBlocks, titleBlock, ...nextBlocks]) <= maxHeight) {
     return true
   }
 
-  if (nextBlock.kind !== 'paragraph') {
+  const nextContentBlock = nextBlocks[nextBlocks.length - 1]
+
+  if (nextContentBlock?.kind !== 'paragraph') {
     return false
   }
 
   const previewLength = findLargestFittingSliceLength(
-    [...pageBlocks, titleBlock],
-    nextBlock,
+    [...pageBlocks, titleBlock, ...nextBlocks.slice(0, -1)],
+    nextContentBlock,
     maxHeight,
     measurer
   )
@@ -253,13 +265,13 @@ export function measureChapterPages(input: MeasureChapterPagesInput): MeasuredPa
 
       while (currentBlock) {
         if (currentBlock.kind === 'title' && pageBlocks.length > 0) {
-          const nextBlock = getNextContentBlock(blocks, blockIndex + 1)
+          const nextBlocks = getKeepWithNextBlocks(blocks, blockIndex + 1)
 
           if (
             !canKeepTitleWithNext(
               pageBlocks,
               currentBlock,
-              nextBlock,
+              nextBlocks,
               maxHeight,
               measurer
             )

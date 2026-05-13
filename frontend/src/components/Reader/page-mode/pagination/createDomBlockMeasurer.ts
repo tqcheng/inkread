@@ -77,19 +77,34 @@ export function createDomBlockMeasurer(
     return null
   }
 
+  const cache = new Map<string, number>()
+
+  const measureBlock = (block: MeasuredInlineBlock) => {
+    const cacheKey = `${block.kind}:${block.startOffset}:${block.endOffset}:${block.text}`
+    const cachedHeight = cache.get(cacheKey)
+
+    if (cachedHeight != null) {
+      return cachedHeight
+    }
+
+    const element = document.createElement('p')
+    applyBlockStyles(element, block, layout)
+    element.textContent = block.text || '\u00A0'
+    container.replaceChildren(element)
+    const measuredHeight = container.scrollHeight
+    cache.set(cacheKey, measuredHeight)
+    return measuredHeight
+  }
+
   return {
     measure(blocks) {
-      const fragment = document.createDocumentFragment()
+      let totalHeight = 0
 
       for (const block of blocks) {
-        const element = document.createElement('p')
-        applyBlockStyles(element, block, layout)
-        element.textContent = block.text || '\u00A0'
-        fragment.appendChild(element)
+        totalHeight += measureBlock(block)
       }
 
-      container.replaceChildren(fragment)
-      return container.scrollHeight
+      return totalHeight
     },
     dispose() {
       container.remove()

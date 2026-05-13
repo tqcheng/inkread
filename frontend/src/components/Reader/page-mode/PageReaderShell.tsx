@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   PAGE_BOTTOM_CHROME_HEIGHT,
   PAGE_STAGE_MAX_WIDTH,
@@ -28,6 +28,7 @@ export function PageReaderShell({
   const [hoverZone, setHoverZone] = useState<'prev' | 'next' | 'center' | null>(
     null
   )
+  const hoverZoneRef = useRef<'prev' | 'next' | 'center' | null>(null)
 
   const resolveZone = (clientX: number, left: number, width: number) => {
     const x = clientX - left
@@ -86,10 +87,18 @@ export function PageReaderShell({
           paddingTop: `${PAGE_TOP_CHROME_HEIGHT}px`,
           paddingBottom: `${PAGE_BOTTOM_CHROME_HEIGHT}px`,
         }}
-        onMouseLeave={() => setHoverZone(null)}
+        onMouseLeave={() => {
+          hoverZoneRef.current = null
+          setHoverZone(null)
+        }}
         onMouseMove={(event) => {
           const rect = event.currentTarget.getBoundingClientRect()
-          setHoverZone(resolveZone(event.clientX, rect.left, rect.width))
+          const nextZone = resolveZone(event.clientX, rect.left, rect.width)
+
+          if (hoverZoneRef.current !== nextZone) {
+            hoverZoneRef.current = nextZone
+            setHoverZone(nextZone)
+          }
         }}
         onClick={(event) => {
           const rect = event.currentTarget.getBoundingClientRect()
