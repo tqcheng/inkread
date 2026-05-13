@@ -18,7 +18,7 @@ describe('measureChapterPages', () => {
     })
 
     expect(pages.length).toBeGreaterThan(1)
-    expect(pages[0].blocks.at(-1)?.kind).not.toBe('title')
+    expect(pages[0].blocks[pages[0].blocks.length - 1]?.kind).not.toBe('title')
   })
 
   it('splits an oversized paragraph into multiple pages', () => {
@@ -37,7 +37,7 @@ describe('measureChapterPages', () => {
     })
 
     expect(pages.length).toBeGreaterThan(1)
-    expect(pages[0].endOffset).toBeLessThan(pages.at(-1)!.endOffset)
+    expect(pages[0].endOffset).toBeLessThan(pages[pages.length - 1]!.endOffset)
   })
 
   it('keeps a title with the following content instead of orphaning it', () => {
@@ -58,7 +58,7 @@ describe('measureChapterPages', () => {
     const titlePage = pages.find((page) => page.blocks.some((block) => block.kind === 'title'))
 
     expect(titlePage).toBeDefined()
-    expect(titlePage?.blocks.at(-1)?.kind).not.toBe('title')
+    expect(titlePage?.blocks[titlePage.blocks.length - 1]?.kind).not.toBe('title')
     expect(titlePage?.blocks.some((block) => block.kind === 'paragraph')).toBe(true)
   })
 
@@ -106,8 +106,8 @@ describe('measureChapterPages', () => {
       },
     })
 
-    expect(pages.at(-1)?.endOffset).toBe(text.length)
-    expect(pages.at(-1)?.endOffset).toBeLessThanOrEqual(text.length)
+    expect(pages[pages.length - 1]?.endOffset).toBe(text.length)
+    expect(pages[pages.length - 1]?.endOffset).toBeLessThanOrEqual(text.length)
   })
 
   it('keeps a title with the first slice of an oversized following paragraph', () => {

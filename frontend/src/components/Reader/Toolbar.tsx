@@ -10,6 +10,8 @@ export interface ToolbarProps {
   bookTitle?: string;
   currentPage?: number;
   totalPages?: number;
+  canPrev?: boolean;
+  canNext?: boolean;
   chapters?: Chapter[];
   onPrev?: () => void;
   onNext?: () => void;
@@ -24,6 +26,8 @@ export function Toolbar({
   bookTitle = '书籍', 
   currentPage = 1, 
   totalPages = 1, 
+  canPrev,
+  canNext,
   chapters = [],
   onPrev, 
   onNext,
@@ -57,6 +61,8 @@ export function Toolbar({
   const lineHeights = [1.6, 1.7, 1.8] as const;
 
   const progress = totalPages > 0 ? Math.round(((currentPage + 1) / totalPages) * 100) : 0;
+  const prevDisabled = canPrev ?? currentPage <= 0;
+  const nextDisabled = canNext ?? currentPage >= totalPages - 1;
 
   if (!show) return null;
 
@@ -130,14 +136,14 @@ export function Toolbar({
             <>
               <button
                 onClick={onPrev}
-                disabled={currentPage <= 0}
+                disabled={prevDisabled}
                 className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg disabled:opacity-50"
               >
                 <ArrowLeft size={24} />
               </button>
               <button
                 onClick={onNext}
-                disabled={currentPage >= totalPages - 1}
+                disabled={nextDisabled}
                 className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg disabled:opacity-50"
               >
                 <ArrowRight size={24} />

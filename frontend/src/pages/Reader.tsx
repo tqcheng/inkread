@@ -2,11 +2,14 @@ import { useParams } from 'react-router-dom';
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { useBookQuery, useBookContentQuery } from '../hooks/useBooks';
 import { useReaderSettings } from '../hooks/useReaderSettings';
-import { useTextPagination } from '../hooks/useTextPagination';
 import { useAuth } from '../hooks/useAuth';
+import { usePageChapterContent } from '../hooks/usePageChapterContent';
 import ThemeProvider from '../components/Reader/ThemeProvider';
 import { Toolbar } from '../components/Reader/Toolbar';
 import { TextContent } from '../components/Reader/TextContent';
+import { PageContent } from '../components/Reader/page-mode/PageContent';
+import { PageReaderShell } from '../components/Reader/page-mode/PageReaderShell';
+import { usePageReaderController } from '../components/Reader/page-mode/usePageReaderController';
 import { booksApi } from '../api/books';
 import LoginOverlay from '../components/LoginOverlay';
 import type { Chapter } from '../api/types';
@@ -18,83 +21,120 @@ interface ChapterBlock {
   text: string;
 }
 
+interface PageAnchorRequest {
+  chapterIndex: number;
+  kind: 'byte' | 'char' | 'start' | 'end';
+  value?: number;
+}
+
+// Book progress is persisted as book-global byte offsets, while the page controller
+// reads chapter-local character offsets. This converts bytes -> chars for restore/jumps.
 function byteOffsetToCharIndex(text: string, byteOffset: number): number {
   const encoder = new TextEncoder();
   let bytes = 0;
-  for (let i = 0; i < text.length; i++) {
+  for (let i = 0; i < text.length; i += 1) {
     bytes += encoder.encode(text[i]).length;
     if (bytes > byteOffset) return i;
   }
   return text.length;
 }
 
-function sliceChapters(content: string, chapters: Chapter[]): ChapterBlock[] {
-  if (!chapters || chapters.length === 0) {
-    return [{
-      title: '正文',
-      startOffset: 0,
-      endOffset: content.length,
-      text: content,
-    }];
+// Inverse of byteOffsetToCharIndex for page-mode progress persistence:
+// chapter-local character offsets -> chapter-local byte offsets.
+function charIndexToByteOffset(text: string, charIndex: number): number {
+  const encoder = new TextEncoder();
+  let bytes = 0;
+  const safeCharIndex = Math.max(0, Math.min(charIndex, text.length));
+
+  for (let i = 0; i < safeCharIndex; i += 1) {
+    bytes += encoder.encode(text[i]).length;
   }
 
-  const blocks: ChapterBlock[] = [];
-  for (let i = 0; i < chapters.length; i++) {
-    const ch = chapters[i];
-    const start = Math.min(ch.position_start, content.length);
-    const end = ch.position_end != null
-      ? Math.min(ch.position_end, content.length)
-      : (i + 1 < chapters.length
-          ? Math.min(chapters[i + 1].position_start, content.length)
-          : content.length);
+  return bytes;
+}
 
-    if (end > start) {
-      blocks.push({
-        title: ch.title || `第 ${(ch.chapter_index ?? i) + 1} 章`,
-        startOffset: start,
-        endOffset: end,
-        text: content.slice(start, end),
-      });
-    }
+function getChapterTitle(chapter: Chapter | undefined, fallbackIndex: number): string {
+  return chapter?.title || `第 ${((chapter?.chapter_index ?? fallbackIndex) + 1)} 章`;
+}
+
+function getChapterArrayIndexForOffset(chapters: Chapter[], absoluteByteOffset: number): number {
+  if (chapters.length === 0) {
+    return 0;
   }
 
-  return blocks;
+  const matchingIndex = chapters.findIndex((chapter) =>
+    absoluteByteOffset >= chapter.position_start &&
+    (chapter.position_end == null || absoluteByteOffset < chapter.position_end)
+  );
+
+  if (matchingIndex >= 0) {
+    return matchingIndex;
+  }
+
+  if (absoluteByteOffset < chapters[0].position_start) {
+    return 0;
+  }
+
+  return chapters.length - 1;
+}
+
+function getDefaultChapterIndex(chapters: Chapter[]): number {
+  const firstContentChapter = chapters.findIndex(
+    (chapter) => chapter.position_end != null && chapter.position_end - chapter.position_start > 50
+  );
+
+  return firstContentChapter >= 0 ? firstContentChapter : 0;
 }
 
 export default function Reader() {
   const { id } = useParams<{ id: string }>();
-  const bookId = id ? parseInt(id) : 0;
+  const bookId = id ? parseInt(id, 10) : 0;
 
   const { data: book } = useBookQuery(bookId);
-  const { readingMode } = useReaderSettings();
+  const {
+    readingMode,
+    fontSize,
+    lineHeight,
+  } = useReaderSettings();
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
 
-  // Scroll mode: fetch single chapter by chapter_index (when chapters exist), else fetch all
+  const isScrollMode = readingMode === 'scroll';
+  const isPageMode = readingMode === 'page';
+
+  const scrollQueryEnabled = isScrollMode;
   const { data: scrollContent } = useBookContentQuery(
-    bookId, 0, 200000,
-    readingMode === 'scroll' && book?.chapters?.length ? currentChapterIndex : undefined
-  );
-  // Pre-chapter content: fetch content before the first chapter when on chapter 0
-  const firstChapterStart = book?.chapters?.[0]?.position_start || 0;
-  const shouldFetchPreContent = readingMode === 'scroll' && currentChapterIndex === 0 && firstChapterStart > 0;
-  const { data: preContent } = useBookContentQuery(
-    bookId, 0, firstChapterStart, undefined, shouldFetchPreContent
-  );
-  // Page mode: fetch bulk content by offset
-  const { data: pageContent } = useBookContentQuery(bookId, 0, 200000,
-    readingMode === 'page' ? undefined : undefined
+    bookId,
+    0,
+    200000,
+    book?.chapters?.length ? currentChapterIndex : undefined,
+    scrollQueryEnabled
   );
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  const firstChapterStart = book?.chapters?.[0]?.position_start || 0;
+  const shouldFetchPreContent = isScrollMode && currentChapterIndex === 0 && firstChapterStart > 0;
+  const { data: preContent } = useBookContentQuery(
+    bookId,
+    0,
+    firstChapterStart,
+    undefined,
+    shouldFetchPreContent
+  );
+
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const contentColumnRef = useRef<HTMLDivElement>(null);
   const [showToolbar, setShowToolbar] = useState(true);
-  const scrollTimeoutRef = useRef<number>();
+  const progressSaveTimeoutRef = useRef<number>();
   const lastScrollTopRef = useRef<number>(0);
   const [chapterProgress, setChapterProgress] = useState(0);
   const initialRestoreRef = useRef(true);
   const searchTargetOffsetRef = useRef<number | null>(null);
   const [highlightQuery, setHighlightQuery] = useState<string | null>(null);
+  const [viewportSize, setViewportSize] = useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }));
+  const [pageInitialAnchor, setPageInitialAnchor] = useState(0);
+  const [pageAnchorRequest, setPageAnchorRequest] = useState<PageAnchorRequest | null>(null);
 
   const { token, isEnabled, isLoading: authLoading, checkStatus } = useAuth();
 
@@ -102,61 +142,249 @@ export default function Reader() {
     checkStatus();
   }, [checkStatus]);
 
-  const { pages, currentPage, totalPages, goToNext, goToPrev, goToOffset } = useTextPagination(
-    readingMode === 'page' ? (pageContent?.content || '') : '',
-    containerRef
-  );
-
-  // Chapter blocks: in scroll mode, single chapter; in page mode, all loaded chapters
-  const chapterBlocks = useMemo(() => {
-    if (!book) return [];
-    if (readingMode === 'scroll') {
-      const pre = currentChapterIndex === 0 ? (preContent?.content || '') : '';
-      const content = scrollContent?.content || '';
-      const ch = book.chapters?.[currentChapterIndex];
-      const title = ch?.title || (book.chapters?.length ? `第 ${currentChapterIndex + 1} 章` : '正文');
-      const fullText = pre + content;
-      return [{
-        title,
-        startOffset: pre ? 0 : (ch?.position_start || 0),
-        endOffset: pre ? (ch?.position_end || fullText.length) : ((ch?.position_start || 0) + content.length),
-        text: fullText,
-      }];
+  useEffect(() => {
+    if (!isPageMode) {
+      return undefined;
     }
-    return sliceChapters(pageContent?.content || '', book.chapters || []);
-  }, [readingMode, scrollContent?.content, preContent?.content, pageContent?.content, book, currentChapterIndex]);
+
+    const handleResize = () => {
+      setViewportSize({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [isPageMode]);
+
+  const chapterBlocks = useMemo<ChapterBlock[]>(() => {
+    if (!book || !isScrollMode) return [];
+
+    const pre = currentChapterIndex === 0 ? (preContent?.content || '') : '';
+    const content = scrollContent?.content || '';
+    const currentChapter = book.chapters?.[currentChapterIndex];
+    const title = currentChapter?.title ||
+      (book.chapters?.length ? `第 ${currentChapterIndex + 1} 章` : '正文');
+    const fullText = pre + content;
+
+    return [{
+      title,
+      startOffset: pre ? 0 : (currentChapter?.position_start || 0),
+      endOffset: pre
+        ? (currentChapter?.position_end || fullText.length)
+        : ((currentChapter?.position_start || 0) + content.length),
+      text: fullText,
+    }];
+  }, [book, currentChapterIndex, isScrollMode, preContent?.content, scrollContent?.content]);
 
   const displayChapterNum = useMemo(() => {
-    if (readingMode !== 'scroll' || !book?.chapters?.length) return null;
-    const ch = book.chapters[currentChapterIndex];
-    return ch?.chapter_index != null ? ch.chapter_index : currentChapterIndex + 1;
-  }, [readingMode, book?.chapters, currentChapterIndex]);
+    if (!isScrollMode || !book?.chapters?.length) return null;
+    const chapter = book.chapters[currentChapterIndex];
+    return chapter?.chapter_index != null ? chapter.chapter_index : currentChapterIndex + 1;
+  }, [book?.chapters, currentChapterIndex, isScrollMode]);
 
   const displayTotalChapters = useMemo(() => {
-    if (readingMode !== 'scroll' || !book?.chapters?.length) return 0;
-    const last = book.chapters[book.chapters.length - 1];
-    return last?.chapter_index != null ? last.chapter_index : book.chapters.length;
-  }, [readingMode, book?.chapters]);
+    if (!isScrollMode || !book?.chapters?.length) return 0;
+    const lastChapter = book.chapters[book.chapters.length - 1];
+    return lastChapter?.chapter_index != null ? lastChapter.chapter_index : book.chapters.length;
+  }, [book?.chapters, isScrollMode]);
 
-  // Scroll tracking within current chapter and progress save
+  const pageChapters = isPageMode ? (book?.chapters || []) : [];
+  const {
+    contentByIndex,
+    errorsByIndex,
+    loadingByIndex,
+  } = usePageChapterContent(bookId, pageChapters, currentChapterIndex);
+
+  const currentPageChapter = book?.chapters?.[currentChapterIndex];
+  const currentPageChapterText = contentByIndex[currentChapterIndex] || '';
+  const currentPageChapterError = errorsByIndex[currentChapterIndex] || null;
+  const isCurrentPageChapterLoading = loadingByIndex[currentChapterIndex] ?? false;
+
+  const {
+    pages: chapterPages,
+    currentPage,
+    currentPageIndex,
+    setCurrentPageIndex,
+    anchorOffset,
+  } = usePageReaderController({
+    chapterIndex: currentChapterIndex,
+    chapterText: currentPageChapterText,
+    viewportWidth: viewportSize.width,
+    viewportHeight: viewportSize.height,
+    fontSize,
+    lineHeight,
+    initialAnchor: pageInitialAnchor,
+  });
+
+  useEffect(() => {
+    if (!isPageMode || !pageAnchorRequest) {
+      return;
+    }
+
+    if (pageAnchorRequest.chapterIndex !== currentChapterIndex || isCurrentPageChapterLoading) {
+      return;
+    }
+
+    if (currentPageChapterError) {
+      setPageInitialAnchor(0);
+      setPageAnchorRequest(null);
+      return;
+    }
+
+    let nextAnchor = 0;
+
+    if (pageAnchorRequest.kind === 'char') {
+      nextAnchor = pageAnchorRequest.value || 0;
+    } else if (pageAnchorRequest.kind === 'byte') {
+      nextAnchor = byteOffsetToCharIndex(currentPageChapterText, pageAnchorRequest.value || 0);
+    } else if (pageAnchorRequest.kind === 'end') {
+      nextAnchor = Math.max(currentPageChapterText.length - 1, 0);
+    }
+
+    setPageInitialAnchor(Math.max(0, Math.min(nextAnchor, currentPageChapterText.length)));
+    setPageAnchorRequest(null);
+  }, [
+    currentChapterIndex,
+    currentPageChapterError,
+    currentPageChapterText,
+    isCurrentPageChapterLoading,
+    isPageMode,
+    pageAnchorRequest,
+  ]);
+
+  const queuePageAnchorRequest = useCallback((request: PageAnchorRequest) => {
+    setCurrentChapterIndex(request.chapterIndex);
+    setPageAnchorRequest(request);
+
+    if (request.kind === 'char') {
+      setPageInitialAnchor(Math.max(0, request.value || 0));
+    } else if (request.kind === 'start') {
+      setPageInitialAnchor(0);
+    }
+  }, []);
+
+  const handlePagePrev = useCallback(() => {
+    if (!isPageMode) {
+      return;
+    }
+
+    if (currentPageIndex > 0) {
+      setCurrentPageIndex(currentPageIndex - 1);
+      return;
+    }
+
+    if (currentChapterIndex > 0) {
+      queuePageAnchorRequest({
+        chapterIndex: currentChapterIndex - 1,
+        kind: 'end',
+      });
+    }
+  }, [currentChapterIndex, currentPageIndex, isPageMode, queuePageAnchorRequest, setCurrentPageIndex]);
+
+  const handlePageNext = useCallback(() => {
+    if (!isPageMode) {
+      return;
+    }
+
+    if (currentPageIndex >= 0 && currentPageIndex < chapterPages.length - 1) {
+      setCurrentPageIndex(currentPageIndex + 1);
+      return;
+    }
+
+    if (currentChapterIndex < (book?.chapters?.length || 0) - 1) {
+      queuePageAnchorRequest({
+        chapterIndex: currentChapterIndex + 1,
+        kind: 'start',
+      });
+    }
+  }, [
+    book?.chapters?.length,
+    chapterPages.length,
+    currentChapterIndex,
+    currentPageIndex,
+    isPageMode,
+    queuePageAnchorRequest,
+    setCurrentPageIndex,
+  ]);
+
+  useEffect(() => {
+    if (!initialRestoreRef.current || !book?.chapters?.length) return;
+
+    if (isPageMode) {
+      if (book.last_read_position != null) {
+        const targetChapterIndex = getChapterArrayIndexForOffset(book.chapters, book.last_read_position);
+        const targetChapter = book.chapters[targetChapterIndex];
+        const chapterLocalByteOffset = Math.max(
+          0,
+          book.last_read_position - (targetChapter?.position_start || 0)
+        );
+
+        queuePageAnchorRequest({
+          chapterIndex: targetChapterIndex,
+          kind: 'byte',
+          value: chapterLocalByteOffset,
+        });
+      } else {
+        const defaultChapterIndex = getDefaultChapterIndex(book.chapters);
+        queuePageAnchorRequest({
+          chapterIndex: defaultChapterIndex,
+          kind: 'start',
+        });
+      }
+
+      initialRestoreRef.current = false;
+      return;
+    }
+
+    if (book.last_read_position != null) {
+      const firstChapter = book.chapters[0];
+      if (firstChapter && book.last_read_position < firstChapter.position_start) {
+        setCurrentChapterIndex(0);
+        initialRestoreRef.current = false;
+        return;
+      }
+      const chapterIndex = book.chapters.findIndex(
+        (chapter: Chapter) => book.last_read_position >= chapter.position_start &&
+          (!chapter.position_end || book.last_read_position < chapter.position_end)
+      );
+      if (chapterIndex >= 0) {
+        setCurrentChapterIndex(chapterIndex);
+        initialRestoreRef.current = false;
+        return;
+      }
+    }
+
+    const firstContentChapter = getDefaultChapterIndex(book.chapters);
+    if (firstContentChapter > 0) {
+      setCurrentChapterIndex(firstContentChapter);
+    }
+    initialRestoreRef.current = false;
+  }, [book?.chapters, book?.last_read_position, isPageMode, queuePageAnchorRequest]);
+
   const handleScroll = useCallback(() => {
-    const el = scrollContainerRef.current;
-    const contentEl = contentColumnRef.current;
-    if (!el || !contentEl || readingMode !== 'scroll') return;
+    const scrollContainer = scrollContainerRef.current;
+    const contentColumn = contentColumnRef.current;
+    if (!scrollContainer || !contentColumn || !isScrollMode) return;
 
-    const contentTop = contentEl.offsetTop;
-    const contentHeight = contentEl.offsetHeight;
-    const visibleStart = el.scrollTop;
-    const effectiveHeight = contentHeight - el.clientHeight;
+    const contentTop = contentColumn.offsetTop;
+    const contentHeight = contentColumn.offsetHeight;
+    const visibleStart = scrollContainer.scrollTop;
+    const effectiveHeight = contentHeight - scrollContainer.clientHeight;
     const progress = effectiveHeight > 0
       ? Math.round(Math.max(0, Math.min(100, ((visibleStart - contentTop) / effectiveHeight) * 100)))
       : 0;
     setChapterProgress(progress);
 
-    if (scrollTimeoutRef.current) {
-      window.clearTimeout(scrollTimeoutRef.current);
+    if (progressSaveTimeoutRef.current) {
+      window.clearTimeout(progressSaveTimeoutRef.current);
     }
-    scrollTimeoutRef.current = window.setTimeout(() => {
+    progressSaveTimeoutRef.current = window.setTimeout(() => {
       const block = chapterBlocks[0];
       if (!block || !bookId) return;
       const chapterTextRatio = block.text.length > 0
@@ -168,123 +396,141 @@ export default function Reader() {
         chapter: block.title,
       });
     }, 3000);
-  }, [readingMode, bookId, chapterBlocks, currentChapterIndex, book?.chapters]);
+  }, [bookId, chapterBlocks, isScrollMode]);
 
-  // Restore reading position on first load, skip volume markers if no saved position
   useEffect(() => {
-    if (!initialRestoreRef.current || !book?.chapters?.length) return;
-
-    if (readingMode === 'page') {
-      goToOffset(book?.last_read_position || 0);
-      initialRestoreRef.current = false;
-      return;
-    }
-
-    if (book?.last_read_position != null) {
-      const firstCh = book.chapters[0];
-      if (firstCh && book.last_read_position < firstCh.position_start) {
-        setCurrentChapterIndex(0);
-        initialRestoreRef.current = false;
-        return;
-      }
-      const idx = book.chapters.findIndex(
-        (c: Chapter) => book.last_read_position! >= c.position_start &&
-          (!c.position_end || book.last_read_position! < c.position_end)
-      );
-      if (idx >= 0) {
-        setCurrentChapterIndex(idx);
-        initialRestoreRef.current = false;
-        return;
-      }
-    }
-
-    // No saved position: jump past volume markers to first real chapter
-    const first = book.chapters.findIndex(
-      (c: Chapter) => c.position_end != null && c.position_end - c.position_start > 50
-    );
-    if (first > 0) setCurrentChapterIndex(first);
-    initialRestoreRef.current = false;
-  }, [book?.last_read_position, book?.chapters, readingMode]);
-
-  // Scroll to saved position on first load, scroll to top on chapter navigation
-  useEffect(() => {
-    if (readingMode !== 'scroll' || !scrollContainerRef.current || !contentColumnRef.current) return;
+    if (!isScrollMode || !scrollContainerRef.current || !contentColumnRef.current) return;
 
     const block = chapterBlocks[0];
     if (!block) return;
 
-    const el = scrollContainerRef.current;
-    const contentEl = contentColumnRef.current;
+    const scrollContainer = scrollContainerRef.current;
+    const contentColumn = contentColumnRef.current;
 
     if (searchTargetOffsetRef.current != null && block.text.length > 0) {
       const offsetInByte = searchTargetOffsetRef.current - block.startOffset;
       const charIndex = byteOffsetToCharIndex(block.text, offsetInByte);
       const progress = Math.max(0, Math.min(1, charIndex / block.text.length));
-      const contentHeight = contentEl.offsetHeight;
-      const targetScroll = contentEl.offsetTop + progress * Math.max(0, contentHeight - el.clientHeight);
-      el.scrollTop = targetScroll;
+      const contentHeight = contentColumn.offsetHeight;
+      const targetScroll = contentColumn.offsetTop + progress * Math.max(0, contentHeight - scrollContainer.clientHeight);
+      scrollContainer.scrollTop = targetScroll;
       searchTargetOffsetRef.current = null;
     } else if (initialRestoreRef.current && book?.last_read_position != null && book?.chapters?.length) {
       const offsetInByte = book.last_read_position - block.startOffset;
       if (offsetInByte >= 0 && block.text.length > 0) {
         const charIndex = byteOffsetToCharIndex(block.text, offsetInByte);
         const progress = charIndex / block.text.length;
-        const contentHeight = contentEl.offsetHeight;
-        const targetScroll = contentEl.offsetTop + progress * Math.max(0, contentHeight - el.clientHeight);
-        el.scrollTop = targetScroll;
+        const contentHeight = contentColumn.offsetHeight;
+        const targetScroll = contentColumn.offsetTop + progress * Math.max(0, contentHeight - scrollContainer.clientHeight);
+        scrollContainer.scrollTop = targetScroll;
       }
       initialRestoreRef.current = false;
     } else {
-      el.scrollTop = 0;
+      scrollContainer.scrollTop = 0;
     }
-  }, [currentChapterIndex, readingMode, chapterBlocks]);
+  }, [book?.chapters?.length, book?.last_read_position, chapterBlocks, currentChapterIndex, isScrollMode]);
 
-  // Cleanup
+  useEffect(() => {
+    if (!isPageMode || !bookId || !currentPage || !currentPageChapter) {
+      return undefined;
+    }
+
+    if (progressSaveTimeoutRef.current) {
+      window.clearTimeout(progressSaveTimeoutRef.current);
+    }
+
+    progressSaveTimeoutRef.current = window.setTimeout(() => {
+      const chapterLocalByteOffset = charIndexToByteOffset(currentPageChapterText, anchorOffset);
+      const absoluteByteOffset = currentPageChapter.position_start + chapterLocalByteOffset;
+
+      booksApi.updateProgress(bookId, {
+        position: absoluteByteOffset,
+        chapter: getChapterTitle(currentPageChapter, currentChapterIndex),
+      });
+    }, 3000);
+
+    return () => {
+      if (progressSaveTimeoutRef.current) {
+        window.clearTimeout(progressSaveTimeoutRef.current);
+      }
+    };
+  }, [
+    anchorOffset,
+    bookId,
+    currentChapterIndex,
+    currentPage,
+    currentPageChapter,
+    currentPageChapterText,
+    isPageMode,
+  ]);
+
   useEffect(() => {
     return () => {
-      if (scrollTimeoutRef.current) {
-        window.clearTimeout(scrollTimeoutRef.current);
+      if (progressSaveTimeoutRef.current) {
+        window.clearTimeout(progressSaveTimeoutRef.current);
       }
     };
   }, []);
 
-  // Click vs scroll discrimination + center-only tap zone in scroll mode
+  useEffect(() => {
+    if (!isPageMode) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isEditable = target instanceof HTMLElement && (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      );
+
+      if (event.key === 'Escape') {
+        if (showToolbar) {
+          event.preventDefault();
+          setShowToolbar(false);
+        }
+        return;
+      }
+
+      if (isEditable) {
+        return;
+      }
+
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        handlePagePrev();
+      } else if (event.key === 'ArrowRight' || event.key === ' ') {
+        event.preventDefault();
+        handlePageNext();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handlePageNext, handlePagePrev, isPageMode, showToolbar]);
+
   const handlePointerDown = () => {
     if (scrollContainerRef.current) {
       lastScrollTopRef.current = scrollContainerRef.current.scrollTop;
     }
   };
 
-  const handlePointerUp = (e: React.MouseEvent | React.TouchEvent) => {
-    if (readingMode !== 'scroll') return;
+  const handlePointerUp = (event: React.MouseEvent | React.TouchEvent) => {
+    if (!isScrollMode) return;
 
     const currentScrollTop = scrollContainerRef.current?.scrollTop ?? lastScrollTopRef.current;
     if (Math.abs(currentScrollTop - lastScrollTopRef.current) > 5) {
       return;
     }
 
-    const clientX = 'changedTouches' in e ? e.changedTouches[0].clientX : e.clientX;
+    const clientX = 'changedTouches' in event ? event.changedTouches[0].clientX : event.clientX;
     const screenWidth = window.innerWidth;
     if (clientX >= screenWidth * 0.4 && clientX <= screenWidth * 0.6) {
-      setShowToolbar((prev) => !prev);
-    }
-  };
-
-  const handleContainerClick = (e: React.MouseEvent) => {
-    if (readingMode === 'scroll') return;
-
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const x = e.clientX - rect.left;
-    const width = rect.width;
-
-    if (x < width * 0.3) {
-      goToPrev();
-    } else if (x > width * 0.7) {
-      goToNext();
-    } else {
-      setShowToolbar((prev) => !prev);
+      setShowToolbar((previous) => !previous);
     }
   };
 
@@ -301,31 +547,41 @@ export default function Reader() {
   };
 
   const handleChapterClick = (chapter: Chapter) => {
-    if (readingMode === 'page') {
-      goToOffset(chapter.position_start);
-    } else {
-      const idx = book?.chapters?.findIndex((c: Chapter) => c.position_start === chapter.position_start) ?? 0;
-      setCurrentChapterIndex(idx >= 0 ? idx : 0);
+    const chapterIndex = book?.chapters?.findIndex((candidate: Chapter) => candidate.id === chapter.id) ?? 0;
+    const nextChapterIndex = chapterIndex >= 0 ? chapterIndex : 0;
+
+    if (isPageMode) {
+      queuePageAnchorRequest({
+        chapterIndex: nextChapterIndex,
+        kind: 'start',
+      });
+      return;
     }
+
+    setCurrentChapterIndex(nextChapterIndex);
   };
 
   const handleSearchResultClick = (offset: number, query: string) => {
     setHighlightQuery(query);
-    if (readingMode === 'page') {
-      goToOffset(offset);
+
+    if (!book?.chapters?.length) {
       return;
     }
 
-    if (!book?.chapters?.length) return;
+    const targetChapterIndex = getChapterArrayIndexForOffset(book.chapters, offset);
+    const targetChapter = book.chapters[targetChapterIndex];
 
-    const idx = book.chapters.findIndex(
-      (c: Chapter) => offset >= c.position_start &&
-        (!c.position_end || offset < c.position_end)
-    );
-    if (idx >= 0) {
-      searchTargetOffsetRef.current = offset;
-      setCurrentChapterIndex(idx);
+    if (isPageMode) {
+      queuePageAnchorRequest({
+        chapterIndex: targetChapterIndex,
+        kind: 'byte',
+        value: Math.max(0, offset - (targetChapter?.position_start || 0)),
+      });
+      return;
     }
+
+    searchTargetOffsetRef.current = offset;
+    setCurrentChapterIndex(targetChapterIndex);
   };
 
   if (!book) {
@@ -337,12 +593,50 @@ export default function Reader() {
   }
 
   const currentBlock = chapterBlocks[0];
-  const currentChapterTitle = currentBlock?.title || '';
+  const currentChapterTitle = isPageMode
+    ? getChapterTitle(currentPageChapter, currentChapterIndex)
+    : (currentBlock?.title || '');
+
+  const pageContent = currentPageChapterError ? (
+    <div className="h-full flex items-center justify-center px-6 text-center">
+      <div className="space-y-4">
+        <p className="text-base font-medium">当前章节加载失败</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">{currentPageChapterError}</p>
+        <div className="flex items-center justify-center gap-3">
+          <button
+            onClick={handlePagePrev}
+            disabled={currentChapterIndex === 0}
+            className="px-4 py-2 rounded-lg text-sm bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            ← 上一章
+          </button>
+          <button
+            onClick={handlePageNext}
+            disabled={currentChapterIndex >= (book.chapters?.length || 1) - 1}
+            className="px-4 py-2 rounded-lg text-sm bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            下一章 →
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : currentPage ? (
+    <PageContent page={currentPage} highlight={highlightQuery} />
+  ) : (
+    <div className="h-full flex items-center justify-center">
+      <div className="text-lg">{isCurrentPageChapterLoading ? '加载中...' : '暂无分页内容'}</div>
+    </div>
+  );
+  const canPagePrev = currentPageIndex > 0 || currentChapterIndex > 0;
+  const canPageNext =
+    (currentPageIndex >= 0 && currentPageIndex < chapterPages.length - 1) ||
+    currentChapterIndex < (book.chapters?.length || 0) - 1;
 
   return (
     <ThemeProvider>
       {isEnabled && !token && !authLoading && <LoginOverlay />}
-      <div className={`h-screen flex flex-col ${readingMode === 'scroll' ? 'overflow-y-auto' : 'overflow-hidden'}`}
+      <div
+        className={`h-screen flex flex-col ${isScrollMode ? 'overflow-y-auto' : 'overflow-hidden'}`}
         style={{ backgroundColor: 'var(--bg-color-side)', color: 'var(--text-color)' }}
         ref={scrollContainerRef}
         onScroll={handleScroll}
@@ -352,11 +646,13 @@ export default function Reader() {
         onTouchEnd={handlePointerUp}
       >
         <Toolbar
-          currentPage={currentPage}
-          totalPages={totalPages}
+          currentPage={isPageMode ? currentPageIndex : 0}
+          totalPages={isPageMode ? chapterPages.length : 1}
+          canPrev={isPageMode ? canPagePrev : undefined}
+          canNext={isPageMode ? canPageNext : undefined}
           chapters={book.chapters || []}
-          onPrev={goToPrev}
-          onNext={goToNext}
+          onPrev={handlePagePrev}
+          onNext={handlePageNext}
           onChapterClick={handleChapterClick}
           show={showToolbar}
           bookTitle={book.title}
@@ -365,17 +661,13 @@ export default function Reader() {
           onSearchResultClick={handleSearchResultClick}
         />
 
-        {readingMode === 'page' ? (
-          <div
-            ref={containerRef}
-            className="flex-1 flex items-center justify-center pt-14 pb-16 px-6 w-[65%] max-w-3xl mx-auto"
-            onClick={handleContainerClick}
-            style={{ overflow: 'hidden' }}
-          >
-            {pages.length > 0 && (
-              <TextContent content={pages[currentPage].content} highlight={highlightQuery} />
-            )}
-          </div>
+        {isPageMode ? (
+          <PageReaderShell
+            pageContent={pageContent}
+            onPrev={handlePagePrev}
+            onNext={handlePageNext}
+            onToggleToolbar={() => setShowToolbar((previous) => !previous)}
+          />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr min(65%, 768px) 1fr', minHeight: '100vh' }}>
             <div style={{ backgroundColor: 'var(--bg-color-side)' }} />

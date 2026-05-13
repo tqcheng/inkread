@@ -5,6 +5,7 @@ import type { Chapter } from '../api/types'
 interface PageChapterContentState {
   contentByIndex: Record<number, string>
   errorsByIndex: Record<number, string | null>
+  loadingByIndex: Record<number, boolean>
 }
 
 export function usePageChapterContent(
@@ -42,11 +43,13 @@ export function usePageChapterContent(
       acc.contentByIndex[index] = results[resultIndex].data ?? ''
       acc.errorsByIndex[index] =
         results[resultIndex].error instanceof Error ? results[resultIndex].error.message : null
+      acc.loadingByIndex[index] = results[resultIndex].isPending
       return acc
     },
     {
       contentByIndex: {},
       errorsByIndex: {},
+      loadingByIndex: {},
     }
   )
 }
