@@ -340,7 +340,7 @@ export default function Admin() {
         <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">重复书籍</h2>
           <p className="text-sm text-gray-500 mb-4">
-            重复组 {dedupSummary?.duplicate_groups ?? 0}，重复书籍 {dedupSummary?.duplicate_books ?? 0}
+            重复组 {dedupSummary?.duplicate_groups ?? 0}，重复书籍 {dedupSummary?.duplicate_books ?? 0}，已忽略 {dedupSummary?.ignored_groups ?? 0}
           </p>
           <div className="space-y-4">
             {dedupGroups.length === 0 ? (

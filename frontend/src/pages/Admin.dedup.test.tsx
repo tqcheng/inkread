@@ -13,7 +13,7 @@ vi.mock('../api/admin', () => ({
     getDedupSummary: vi.fn().mockResolvedValue({
       duplicate_groups: 1,
       duplicate_books: 2,
-      ignored_groups: 0,
+      ignored_groups: 3,
     }),
     getDedupGroups: vi.fn().mockResolvedValue({
       items: [{
@@ -106,6 +106,7 @@ describe('Admin duplicate management', () => {
     render(<Admin />, { wrapper: createWrapper() })
 
     expect(await screen.findByText('重复书籍')).toBeInTheDocument()
+    expect(screen.getByText('重复组 1，重复书籍 2，已忽略 3')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /展开重复组/i }))
     fireEvent.click(await screen.findByLabelText('保留副本'))
