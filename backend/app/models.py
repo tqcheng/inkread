@@ -11,6 +11,7 @@ from sqlalchemy import (
     Text,
     BigInteger,
     ForeignKey,
+    Index,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -22,12 +23,18 @@ class Book(Base):
     """Book metadata and AI classification."""
 
     __tablename__ = "books"
+    __table_args__ = (Index("ix_books_content_md5", "content_md5"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     filename: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    content_md5: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    file_mtime: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    dedup_ignored_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
 
     # AI classification fields
     category: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)

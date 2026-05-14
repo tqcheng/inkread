@@ -4,8 +4,10 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import inspect, text
 from httpx import ASGITransport, AsyncClient
 
+from app.core.database import engine, init_db
 from app.main import create_app
 
 
@@ -51,3 +53,46 @@ async def test_asset_request_uses_static_file(frontend_client: AsyncClient):
 
     assert response.status_code == 200
     assert "console.log('ok')" in response.text
+
+
+@pytest.mark.asyncio
+async def test_init_db_adds_dedup_columns_for_existing_books_table():
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP TABLE IF EXISTS books"))
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE books (
+                    id INTEGER PRIMARY KEY,
+                    title VARCHAR(255) NOT NULL,
+                    filename VARCHAR(255) NOT NULL UNIQUE,
+                    file_path VARCHAR(500) NOT NULL,
+                    file_size BIGINT,
+                    category VARCHAR(50),
+                    category_confidence FLOAT,
+                    tags JSON,
+                    tags_source VARCHAR(20),
+                    encoding_original VARCHAR(20),
+                    is_utf8_converted BOOLEAN,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    is_favorite BOOLEAN,
+                    is_deleted BOOLEAN,
+                    last_read_position INTEGER,
+                    last_read_chapter VARCHAR(255),
+                    ai_analyzed_at DATETIME
+                )
+                """
+            )
+        )
+
+    await init_db()
+
+    async with engine.begin() as conn:
+        columns = await conn.run_sync(
+            lambda sync_conn: {col["name"] for col in inspect(sync_conn).get_columns("books")}
+        )
+
+    assert "content_md5" in columns
+    assert "file_mtime" in columns
+    assert "dedup_ignored_at" in columns

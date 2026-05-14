@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from app.core.config import settings
 
@@ -43,7 +43,31 @@ async def init_db() -> None:
     """Initialize database by creating all tables."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await ensure_book_dedup_columns(engine)
     await init_fts_tables(engine)
+
+
+async def ensure_book_dedup_columns(engine) -> None:
+    """Backfill dedup columns and index for preexisting books tables."""
+    async with engine.begin() as conn:
+        existing_columns = await conn.run_sync(
+            lambda sync_conn: {col["name"] for col in inspect(sync_conn).get_columns("books")}
+        )
+
+        if "content_md5" not in existing_columns:
+            await conn.execute(text("ALTER TABLE books ADD COLUMN content_md5 VARCHAR(32)"))
+
+        if "file_mtime" not in existing_columns:
+            await conn.execute(text("ALTER TABLE books ADD COLUMN file_mtime DATETIME"))
+
+        if "dedup_ignored_at" not in existing_columns:
+            await conn.execute(
+                text("ALTER TABLE books ADD COLUMN dedup_ignored_at DATETIME")
+            )
+
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_books_content_md5 ON books (content_md5)")
+        )
 
 
 async def init_fts_tables(engine) -> None:
