@@ -105,6 +105,59 @@ export interface ScanResultSummary {
   failed: number;
 }
 
+export interface DedupSummaryResponse {
+  duplicate_groups: number;
+  duplicate_books: number;
+  ignored_groups: number;
+}
+
+export interface DedupGroupItem {
+  id: number;
+  title: string;
+  filename: string;
+  file_path: string;
+  file_size: number | null;
+  file_mtime: string | null;
+  is_favorite: boolean;
+  last_read_position: number;
+  chapter_count: number;
+}
+
+export interface DedupGroup {
+  content_md5: string;
+  count: number;
+  recommended_keep_book_id: number;
+  items: DedupGroupItem[];
+}
+
+export interface DedupGroupListResponse {
+  items: DedupGroup[];
+}
+
+export interface DedupResolveRequest {
+  content_md5: string;
+  keep_book_id: number;
+  delete_book_ids: number[];
+  mode: 'soft_delete' | 'hard_delete';
+  delete_source_files: boolean;
+}
+
+export interface DedupResolveFileResult {
+  book_id: number;
+  file_path: string;
+  deleted: boolean;
+  reason: string | null;
+}
+
+export interface DedupResolveResponse {
+  content_md5: string;
+  keep_book_id: number;
+  deleted_book_ids: number[];
+  mode: 'soft_delete' | 'hard_delete';
+  delete_source_files: boolean;
+  file_results: DedupResolveFileResult[];
+}
+
 export interface ReadingProgressUpdate {
   current_position: number;
   current_chapter?: string;

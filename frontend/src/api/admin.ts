@@ -1,5 +1,14 @@
 import apiClient from './client';
-import type { Book, UpdateMetadataData, SecuritySettingsRequest, SecuritySettingsResponse } from './types';
+import type {
+  Book,
+  DedupGroupListResponse,
+  DedupResolveRequest,
+  DedupResolveResponse,
+  DedupSummaryResponse,
+  SecuritySettingsRequest,
+  SecuritySettingsResponse,
+  UpdateMetadataData,
+} from './types';
 
 export const adminApi = {
   batchDelete: async (ids: number[]): Promise<void> => {
@@ -24,6 +33,21 @@ export const adminApi = {
     } catch {
       return false;
     }
+  },
+
+  getDedupSummary: async (): Promise<DedupSummaryResponse> => {
+    const response = await apiClient.get<DedupSummaryResponse>('/admin/dedup/summary');
+    return response.data;
+  },
+
+  getDedupGroups: async (): Promise<DedupGroupListResponse> => {
+    const response = await apiClient.get<DedupGroupListResponse>('/admin/dedup/groups');
+    return response.data;
+  },
+
+  resolveDedupGroup: async (data: DedupResolveRequest): Promise<DedupResolveResponse> => {
+    const response = await apiClient.post<DedupResolveResponse>('/admin/dedup/resolve', data);
+    return response.data;
   },
 
   getOrphanedBooksCount: async (): Promise<{ orphaned_books: number }> => {
