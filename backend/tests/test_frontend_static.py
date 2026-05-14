@@ -8,7 +8,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from httpx import ASGITransport, AsyncClient
 
-from app.core.database import ensure_book_dedup_columns
+import app.core.database as database
 from app.main import create_app
 
 
@@ -60,6 +60,7 @@ async def test_asset_request_uses_static_file(frontend_client: AsyncClient):
 async def test_init_db_adds_dedup_columns_for_existing_books_table(tmp_path: Path):
     db_path = tmp_path / "tmp_dedup_test.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", echo=False, future=True)
+    original_engine = database.engine
 
     try:
         async with engine.begin() as conn:
@@ -90,7 +91,8 @@ async def test_init_db_adds_dedup_columns_for_existing_books_table(tmp_path: Pat
                 )
             )
 
-        await ensure_book_dedup_columns(engine)
+        database.engine = engine
+        await database.init_db()
 
         async with engine.begin() as conn:
             columns = await conn.run_sync(
@@ -109,4 +111,5 @@ async def test_init_db_adds_dedup_columns_for_existing_books_table(tmp_path: Pat
         assert "dedup_ignored_at" in columns
         assert "ix_books_content_md5" in indexes
     finally:
+        database.engine = original_engine
         await engine.dispose()
