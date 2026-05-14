@@ -139,7 +139,7 @@ export interface DedupResolveRequest {
   keep_book_id: number;
   delete_book_ids: number[];
   mode: 'soft_delete' | 'hard_delete';
-  delete_source_files: boolean;
+  delete_source_files?: boolean;
 }
 
 export interface DedupResolveFileResult {

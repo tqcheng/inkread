@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Admin from './Admin'
 import { adminApi } from '../api/admin'
+import { BOOKS_QUERY_KEY, BOOK_QUERY_KEY } from '../hooks/useBooks'
 
 const scanMocks = vi.hoisted(() => ({
   scanStatus: null as null | {
@@ -24,6 +25,8 @@ const scanMocks = vi.hoisted(() => ({
   },
   refetchSummary: vi.fn(),
 }))
+
+let queryClient: QueryClient
 
 vi.mock('../api/admin', () => ({
   adminApi: {
@@ -54,7 +57,7 @@ vi.mock('../components/SecuritySettingsSection', () => ({
 }))
 
 function createWrapper() {
-  const queryClient = new QueryClient({
+  queryClient = new QueryClient({
     defaultOptions: {
       queries: {
         retry: false,
@@ -305,6 +308,10 @@ describe('Admin duplicate management', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /展开重复组/i }))
     fireEvent.click(await screen.findByLabelText('保留副本'))
+
+    expect(screen.getByRole('button', { name: '硬删除其余' })).toBeDisabled()
+    expect(screen.getByText('先勾选上方选项，才能执行硬删除。')).toBeInTheDocument()
+
     fireEvent.click(screen.getByRole('button', { name: '软删除其余' }))
 
     await waitFor(() => {
@@ -316,5 +323,55 @@ describe('Admin duplicate management', () => {
         delete_source_files: false,
       })
     })
+  })
+
+  it('enables hard delete only after source-file deletion is enabled', async () => {
+    render(<Admin />, { wrapper: createWrapper() })
+
+    expect(await findByTextContent('重复组 1，重复书籍 2，已忽略 3')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /展开重复组/i }))
+
+    const hardDeleteButton = screen.getByRole('button', { name: '硬删除其余' })
+    expect(hardDeleteButton).toBeDisabled()
+    expect(screen.getByText('先勾选上方选项，才能执行硬删除。')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('同时删除被移除副本的原始文件'))
+
+    expect(screen.getByRole('button', { name: '硬删除其余' })).toBeEnabled()
+    expect(screen.queryByText('先勾选上方选项，才能执行硬删除。')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '硬删除其余' }))
+
+    await waitFor(() => {
+      expect(adminApi.resolveDedupGroup).toHaveBeenCalledWith({
+        content_md5: 'abc',
+        keep_book_id: 2,
+        delete_book_ids: [1],
+        mode: 'hard_delete',
+        delete_source_files: true,
+      })
+    })
+  })
+
+  it('invalidates book caches and reloads dedup data after resolving a group', async () => {
+    render(<Admin />, { wrapper: createWrapper() })
+
+    expect(await findByTextContent('重复组 1，重复书籍 2，已忽略 3')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /展开重复组/i }))
+    fireEvent.click(await screen.findByLabelText('保留副本'))
+
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+    fireEvent.click(screen.getByRole('button', { name: '软删除其余' }))
+
+    await waitFor(() => {
+      expect(adminApi.resolveDedupGroup).toHaveBeenCalledTimes(1)
+      expect(adminApi.getDedupSummary).toHaveBeenCalledTimes(2)
+      expect(adminApi.getDedupGroups).toHaveBeenCalledTimes(2)
+    })
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: BOOKS_QUERY_KEY })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: [BOOK_QUERY_KEY] })
   })
 })

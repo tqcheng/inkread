@@ -6,7 +6,7 @@ import { adminApi } from '../api/admin';
 import type { DedupGroup, DedupSummaryResponse } from '../api/types';
 import { useAdminStore } from '../hooks/useAdmin';
 import { useQueryClient } from '@tanstack/react-query';
-import { BOOKS_QUERY_KEY } from '../hooks/useBooks';
+import { BOOKS_QUERY_KEY, BOOK_QUERY_KEY } from '../hooks/useBooks';
 import SecuritySettingsSection from '../components/SecuritySettingsSection';
 
 const ADMIN_KEY = 'changeme';
@@ -119,6 +119,12 @@ export default function Admin() {
 
   const handleResolveGroup = async (group: DedupGroup, mode: 'soft_delete' | 'hard_delete') => {
     const selectedKeepBookId = selectedKeepByHash[group.content_md5];
+    const deleteSourceFilesEnabled = deleteSourceFilesByHash[group.content_md5] ?? false;
+
+    if (mode === 'hard_delete' && !deleteSourceFilesEnabled) {
+      return;
+    }
+
     const keepBookId = group.items.some((item) => item.id === selectedKeepBookId)
       ? selectedKeepBookId
       : group.items.find((item) => item.id === group.recommended_keep_book_id)?.id;
@@ -147,10 +153,14 @@ export default function Admin() {
       keep_book_id: keepBookId,
       delete_book_ids: deleteBookIds,
       mode,
-      delete_source_files: deleteSourceFilesByHash[group.content_md5] ?? false,
+      delete_source_files: deleteSourceFilesEnabled,
     });
 
-    await loadDedupData();
+    await Promise.all([
+      loadDedupData(),
+      queryClient.invalidateQueries({ queryKey: BOOKS_QUERY_KEY }),
+      queryClient.invalidateQueries({ queryKey: [BOOK_QUERY_KEY] }),
+    ]);
   };
 
   useEffect(() => {
@@ -425,36 +435,52 @@ export default function Admin() {
                               </label>
                             ))}
                           </div>
-                          <label className="flex items-center gap-2 text-sm text-red-600">
-                            <input
-                              type="checkbox"
-                              checked={deleteSourceFilesByHash[group.content_md5] ?? false}
-                              onChange={(event) => setDeleteSourceFilesByHash((prev) => ({
-                                ...prev,
-                                [group.content_md5]: event.target.checked,
-                              }))}
-                            />
-                            同时删除被移除副本的原始文件
-                          </label>
-                          {deleteSourceFilesByHash[group.content_md5] && (
-                            <p className="text-xs text-red-500">将直接删除磁盘文件，无法恢复。</p>
-                          )}
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleResolveGroup(group, 'soft_delete')}
-                              className="px-4 py-2 rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-colors"
-                            >
-                              软删除其余
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleResolveGroup(group, 'hard_delete')}
-                              className="px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
-                            >
-                              硬删除其余
-                            </button>
-                          </div>
+                          {(() => {
+                            const deleteSourceFilesEnabled = deleteSourceFilesByHash[group.content_md5] ?? false;
+
+                            return (
+                              <>
+                                <label className="flex items-center gap-2 text-sm text-red-600">
+                                  <input
+                                    type="checkbox"
+                                    checked={deleteSourceFilesEnabled}
+                                    onChange={(event) => setDeleteSourceFilesByHash((prev) => ({
+                                      ...prev,
+                                      [group.content_md5]: event.target.checked,
+                                    }))}
+                                  />
+                                  同时删除被移除副本的原始文件
+                                </label>
+                                {deleteSourceFilesEnabled ? (
+                                  <p className="text-xs text-red-500">将直接删除磁盘文件，无法恢复。</p>
+                                ) : (
+                                  <p className="text-xs text-gray-500">先勾选上方选项，才能执行硬删除。</p>
+                                )}
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResolveGroup(group, 'soft_delete')}
+                                    className="px-4 py-2 rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-colors"
+                                  >
+                                    软删除其余
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResolveGroup(group, 'hard_delete')}
+                                    disabled={!deleteSourceFilesEnabled}
+                                    title={deleteSourceFilesEnabled ? '将删除书籍记录和原始文件' : '先勾选“同时删除被移除副本的原始文件”'}
+                                    className={`px-4 py-2 rounded-lg text-white transition-colors ${
+                                      deleteSourceFilesEnabled
+                                        ? 'bg-red-500 hover:bg-red-600'
+                                        : 'bg-red-300 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    硬删除其余
+                                  </button>
+                                </div>
+                              </>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>
