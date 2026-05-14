@@ -1,6 +1,7 @@
 """File scanning service for TXT Reader."""
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -79,9 +80,14 @@ def extract_chapters(file_path: Path) -> List[Dict[str, Any]]:
     Returns:
         List of chapter dicts with title, position_start, and position_end
     """
-    chapters = []
+    chapters, _ = extract_chapters_and_md5(file_path)
+    return chapters
 
-    # Compile regex patterns
+
+def extract_chapters_and_md5(file_path: Path) -> Tuple[List[Dict[str, Any]], str]:
+    """Extract chapter metadata and content MD5 in a single file pass."""
+    chapters = []
+    digest = hashlib.md5()
     compiled_patterns = [re.compile(p, re.IGNORECASE) for p in CHAPTER_PATTERNS]
 
     current_chapter = None
@@ -90,10 +96,9 @@ def extract_chapters(file_path: Path) -> List[Dict[str, Any]]:
 
     with open(file_path, "rb") as f:
         for line_bytes in f:
-            # Decode for pattern matching
+            digest.update(line_bytes)
             line = line_bytes.decode("utf-8", errors="ignore").strip()
 
-            # Check if this line matches any chapter pattern
             is_chapter_line = False
             for pattern in compiled_patterns:
                 if pattern.match(line):
@@ -101,7 +106,6 @@ def extract_chapters(file_path: Path) -> List[Dict[str, Any]]:
                     break
 
             if is_chapter_line:
-                # Save previous chapter if exists
                 if current_chapter is not None:
                     chapters.append(
                         {
@@ -112,14 +116,11 @@ def extract_chapters(file_path: Path) -> List[Dict[str, Any]]:
                         }
                     )
 
-                # Start new chapter
                 current_chapter = line
                 current_start = position
 
-            # Accumulate byte position (not character count)
             position += len(line_bytes)
 
-    # Don't forget the last chapter
     if current_chapter is not None:
         chapters.append(
             {
@@ -130,7 +131,7 @@ def extract_chapters(file_path: Path) -> List[Dict[str, Any]]:
             }
         )
 
-    return chapters
+    return chapters, digest.hexdigest()
 
 
 async def scan_single_file(
@@ -170,7 +171,10 @@ async def scan_single_file(
 
         if existing_book:
             # Check if file has been modified
-            if existing_book.file_size == file_size:
+            if (
+                existing_book.file_size == file_size
+                and existing_book.file_mtime == mtime
+            ):
                 # File unchanged, skip
                 logger.debug(f"Skipping unchanged file: {filename}")
                 return existing_book, "skipped_unchanged"
@@ -193,8 +197,8 @@ async def scan_single_file(
             else:
                 logger.warning(f"Failed to convert {filename}: {convert_msg}")
 
-        # Extract chapters (byte positions)
-        chapters = extract_chapters(file_path)
+        # Extract chapters (byte positions) and content hash in one pass
+        chapters, content_md5 = extract_chapters_and_md5(file_path)
 
         # Clean filename to get title
         title = clean_filename(filename)
@@ -207,7 +211,9 @@ async def scan_single_file(
             # Update existing
             existing_book.title = title
             existing_book.file_size = file_size
+            existing_book.file_mtime = mtime
             existing_book.file_path = str(file_path)
+            existing_book.content_md5 = content_md5
             existing_book.encoding_original = original_encoding
             existing_book.is_utf8_converted = is_converted
             existing_book.updated_at = datetime.utcnow()
@@ -218,6 +224,8 @@ async def scan_single_file(
                 filename=filename,
                 file_path=str(file_path),
                 file_size=file_size,
+                file_mtime=mtime,
+                content_md5=content_md5,
                 encoding_original=original_encoding,
                 is_utf8_converted=is_converted,
             )
