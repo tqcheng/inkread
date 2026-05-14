@@ -51,19 +51,27 @@ async def ensure_book_dedup_columns(engine) -> None:
     """Backfill dedup columns and index for preexisting books tables."""
     async with engine.begin() as conn:
         existing_columns = await conn.run_sync(
-            lambda sync_conn: {col["name"] for col in inspect(sync_conn).get_columns("books")}
+            lambda sync_conn: {
+                col["name"] for col in inspect(sync_conn).get_columns("books")
+            }
         )
 
+        async def add_column(statement: str) -> None:
+            try:
+                await conn.execute(text(statement))
+            except Exception as exc:
+                message = str(exc).lower()
+                if "duplicate column name" not in message and "already exists" not in message:
+                    raise
+
         if "content_md5" not in existing_columns:
-            await conn.execute(text("ALTER TABLE books ADD COLUMN content_md5 VARCHAR(32)"))
+            await add_column("ALTER TABLE books ADD COLUMN content_md5 VARCHAR(32)")
 
         if "file_mtime" not in existing_columns:
-            await conn.execute(text("ALTER TABLE books ADD COLUMN file_mtime DATETIME"))
+            await add_column("ALTER TABLE books ADD COLUMN file_mtime DATETIME")
 
         if "dedup_ignored_at" not in existing_columns:
-            await conn.execute(
-                text("ALTER TABLE books ADD COLUMN dedup_ignored_at DATETIME")
-            )
+            await add_column("ALTER TABLE books ADD COLUMN dedup_ignored_at DATETIME")
 
         await conn.execute(
             text("CREATE INDEX IF NOT EXISTS ix_books_content_md5 ON books (content_md5)")
