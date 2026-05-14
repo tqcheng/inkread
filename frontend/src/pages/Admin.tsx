@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { FolderSearch, RefreshCw, CheckCircle, XCircle, Clock, Loader2, Database, AlertTriangle, Trash2 } from 'lucide-react';
 import { useScanSummary, useScanStatus, useTriggerScanMutation } from '../hooks/useScan';
 import { adminApi } from '../api/admin';
-import type { DedupGroup, DedupSummaryResponse } from '../api/types';
+import type { DedupGroup, DedupResolveResponse, DedupSummaryResponse } from '../api/types';
 import { useAdminStore } from '../hooks/useAdmin';
 import { useQueryClient } from '@tanstack/react-query';
 import { BOOKS_QUERY_KEY, BOOK_QUERY_KEY } from '../hooks/useBooks';
@@ -34,10 +34,12 @@ export default function Admin() {
   const [deleteSourceFilesByHash, setDeleteSourceFilesByHash] = useState<Record<string, boolean>>({});
   const [isDedupLoading, setIsDedupLoading] = useState(true);
   const [dedupError, setDedupError] = useState<string | null>(null);
+  const [dedupResolveWarning, setDedupResolveWarning] = useState<string | null>(null);
 
   const loadDedupData = async () => {
     setIsDedupLoading(true);
     setDedupError(null);
+    setDedupResolveWarning(null);
 
     try {
       const [summaryData, groupsData] = await Promise.all([
@@ -148,7 +150,7 @@ export default function Admin() {
       return;
     }
 
-    await adminApi.resolveDedupGroup({
+    const resolveResult: DedupResolveResponse = await adminApi.resolveDedupGroup({
       content_md5: group.content_md5,
       keep_book_id: keepBookId,
       delete_book_ids: deleteBookIds,
@@ -156,11 +158,18 @@ export default function Admin() {
       delete_source_files: deleteSourceFilesEnabled,
     });
 
+    const failedSourceFiles = resolveResult.file_results.filter((fileResult) => !fileResult.deleted);
+    const resolveWarning = failedSourceFiles.length > 0
+      ? `部分原始文件未删除（${failedSourceFiles.length} 个），可能会在后续扫描中重新出现。`
+      : null;
+
     await Promise.all([
       loadDedupData(),
       queryClient.invalidateQueries({ queryKey: BOOKS_QUERY_KEY }),
       queryClient.invalidateQueries({ queryKey: [BOOK_QUERY_KEY] }),
     ]);
+
+    setDedupResolveWarning(resolveWarning);
   };
 
   useEffect(() => {
@@ -376,6 +385,14 @@ export default function Admin() {
             <div className="text-sm text-red-600" role="alert">{dedupError}</div>
           ) : (
             <>
+              {dedupResolveWarning && (
+                <div
+                  className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700"
+                  role="alert"
+                >
+                  {dedupResolveWarning}
+                </div>
+              )}
               <p className="text-sm text-gray-500 mb-4">
                 重复组 {dedupSummary?.duplicate_groups ?? 0}，重复书籍 {dedupSummary?.duplicate_books ?? 0}，已忽略 {dedupSummary?.ignored_groups ?? 0}
               </p>

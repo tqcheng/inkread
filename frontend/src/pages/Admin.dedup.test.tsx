@@ -374,4 +374,32 @@ describe('Admin duplicate management', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: BOOKS_QUERY_KEY })
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: [BOOK_QUERY_KEY] })
   })
+
+  it('shows a warning when source file deletion fails during resolve', async () => {
+    vi.mocked(adminApi.resolveDedupGroup).mockResolvedValueOnce({
+      content_md5: 'abc',
+      keep_book_id: 2,
+      deleted_book_ids: [1],
+      mode: 'hard_delete',
+      delete_source_files: true,
+      file_results: [
+        {
+          book_id: 1,
+          file_path: '/books/a.txt',
+          deleted: false,
+          reason: 'permission denied',
+        },
+      ],
+    })
+
+    render(<Admin />, { wrapper: createWrapper() })
+
+    expect(await findByTextContent('重复组 1，重复书籍 2，已忽略 3')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /展开重复组/i }))
+    fireEvent.click(screen.getByLabelText('同时删除被移除副本的原始文件'))
+    fireEvent.click(screen.getByRole('button', { name: '硬删除其余' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('部分原始文件未删除（1 个），可能会在后续扫描中重新出现。')
+  })
 })
