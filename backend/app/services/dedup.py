@@ -54,7 +54,11 @@ def _recommend_keep_book_id(books: Iterable[Book]) -> int:
 async def _load_candidate_books(db: AsyncSession) -> list[Book]:
     result = await db.execute(
         select(Book)
-        .where(Book.is_deleted == False, Book.content_md5.is_not(None))
+        .where(
+            Book.is_deleted == False,
+            Book.content_md5.is_not(None),
+            Book.dedup_ignored_at.is_(None),
+        )
         .order_by(Book.content_md5.asc(), Book.id.asc())
     )
     return list(result.scalars().all())
@@ -82,13 +86,8 @@ async def _build_duplicate_groups(db: AsyncSession) -> tuple[list[DedupGroupResp
         grouped.setdefault(book.content_md5, []).append(book)
 
     duplicate_groups: list[tuple[str, list[Book]]] = []
-    ignored_groups = 0
-
     for content_md5, items in grouped.items():
         if len(items) <= 1:
-            continue
-        if any(book.dedup_ignored_at is not None for book in items):
-            ignored_groups += 1
             continue
         duplicate_groups.append((content_md5, items))
 
@@ -132,7 +131,7 @@ async def _build_duplicate_groups(db: AsyncSession) -> tuple[list[DedupGroupResp
         )
 
     responses.sort(key=lambda group: (-group.count, group.content_md5))
-    return responses, ignored_groups
+    return responses, 0
 
 
 async def get_dedup_summary(db: AsyncSession) -> DedupSummaryResponse:
@@ -294,6 +293,7 @@ async def resolve_duplicate_group(
             Book.id.in_(all_ids),
             Book.is_deleted == False,
             Book.content_md5 == request.content_md5,
+            Book.dedup_ignored_at.is_(None),
         )
     )
     books = list(result.scalars().all())
@@ -304,9 +304,6 @@ async def resolve_duplicate_group(
 
     keep = books_by_id[request.keep_book_id]
     duplicates = [books_by_id[book_id] for book_id in request.delete_book_ids]
-
-    if any(book.dedup_ignored_at is not None for book in [keep, *duplicates]):
-        raise HTTPException(status_code=400, detail="该重复分组已被忽略")
 
     _merge_book_state(keep, duplicates)
     await _merge_reading_progress(db, keep, duplicates)
