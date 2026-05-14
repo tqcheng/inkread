@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterable
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Book, Chapter, ReadingProgress
@@ -36,6 +36,29 @@ def _metadata_completeness(book: Book) -> int:
     if book.encoding_original:
         score += 1
     return score
+
+
+def _metadata_rank(book: Book, keep_id: int) -> tuple[int, int, float, float, int, int]:
+    return (
+        int(book.tags_source == "manual"),
+        _metadata_completeness(book),
+        book.category_confidence if book.category_confidence is not None else -1.0,
+        book.ai_analyzed_at.timestamp() if book.ai_analyzed_at else 0.0,
+        int(book.id == keep_id),
+        -book.id,
+    )
+
+
+def _pick_metadata_source(
+    keep: Book,
+    books: list[Book],
+    field_name: str,
+) -> Book | None:
+    candidates = [book for book in books if getattr(book, field_name)]
+    if not candidates:
+        return None
+
+    return max(candidates, key=lambda book: _metadata_rank(book, keep.id))
 
 
 def _recommend_keep_book_id(books: Iterable[Book]) -> int:
@@ -77,6 +100,20 @@ async def _load_chapter_counts(db: AsyncSession, book_ids: list[int]) -> dict[in
 
 
 async def _build_duplicate_groups(db: AsyncSession) -> tuple[list[DedupGroupResponse], int]:
+    ignored_group_result = await db.execute(
+        select(Book.content_md5)
+        .where(
+            Book.is_deleted == False,
+            Book.content_md5.is_not(None),
+        )
+        .group_by(Book.content_md5)
+        .having(
+            func.count(Book.id) > 1,
+            func.sum(case((Book.dedup_ignored_at.is_not(None), 1), else_=0)) > 0,
+        )
+    )
+    ignored_groups = len(list(ignored_group_result.scalars().all()))
+
     books = await _load_candidate_books(db)
     grouped: dict[str, list[Book]] = {}
 
@@ -131,7 +168,7 @@ async def _build_duplicate_groups(db: AsyncSession) -> tuple[list[DedupGroupResp
         )
 
     responses.sort(key=lambda group: (-group.count, group.content_md5))
-    return responses, 0
+    return responses, ignored_groups
 
 
 async def get_dedup_summary(db: AsyncSession) -> DedupSummaryResponse:
@@ -150,6 +187,28 @@ async def list_dedup_groups(db: AsyncSession) -> DedupGroupListResponse:
 
 def _merge_book_state(keep: Book, duplicates: list[Book]) -> None:
     all_books = [keep, *duplicates]
+    category_source = _pick_metadata_source(keep, all_books, "category")
+    if category_source is not None:
+        keep.category = category_source.category
+        keep.category_confidence = category_source.category_confidence
+
+    tags_source = _pick_metadata_source(keep, all_books, "tags")
+    if tags_source is not None:
+        keep.tags = list(tags_source.tags)
+        keep.tags_source = tags_source.tags_source
+
+    encoding_source = _pick_metadata_source(keep, all_books, "encoding_original")
+    if encoding_source is not None:
+        keep.encoding_original = encoding_source.encoding_original
+
+    ai_analysis_source = max(
+        (book for book in all_books if book.ai_analyzed_at is not None),
+        default=None,
+        key=lambda book: (book.ai_analyzed_at, book.id == keep.id, -book.id),
+    )
+    if ai_analysis_source is not None:
+        keep.ai_analyzed_at = ai_analysis_source.ai_analyzed_at
+
     keep.is_favorite = any(book.is_favorite for book in all_books)
 
     best_progress_book = max(
@@ -280,6 +339,11 @@ async def resolve_duplicate_group(
     db: AsyncSession,
     request: DedupResolveRequest,
 ) -> DedupResolveResponse:
+    if request.mode == "hard_delete" and not request.delete_source_files:
+        raise HTTPException(
+            status_code=400,
+            detail="hard_delete必须同时设置delete_source_files=true",
+        )
     if not request.delete_book_ids:
         raise HTTPException(status_code=400, detail="delete_book_ids不能为空")
     if len(set(request.delete_book_ids)) != len(request.delete_book_ids):
