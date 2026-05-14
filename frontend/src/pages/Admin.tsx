@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { FolderSearch, RefreshCw, CheckCircle, XCircle, Clock, Loader2, Database, AlertTriangle, Trash2 } from 'lucide-react';
 import { useScanSummary, useScanStatus, useTriggerScanMutation } from '../hooks/useScan';
 import { adminApi } from '../api/admin';
+import type { DedupGroup, DedupSummaryResponse } from '../api/types';
 import { useAdminStore } from '../hooks/useAdmin';
 import { useQueryClient } from '@tanstack/react-query';
 import { BOOKS_QUERY_KEY } from '../hooks/useBooks';
@@ -26,6 +27,38 @@ export default function Admin() {
   const [resetting, setResetting] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [cleanResult, setCleanResult] = useState<string>('');
+  const [dedupSummary, setDedupSummary] = useState<DedupSummaryResponse | null>(null);
+  const [dedupGroups, setDedupGroups] = useState<DedupGroup[]>([]);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [selectedKeepByHash, setSelectedKeepByHash] = useState<Record<string, number>>({});
+  const [deleteSourceFilesByHash, setDeleteSourceFilesByHash] = useState<Record<string, boolean>>({});
+
+  const loadDedupData = async () => {
+    try {
+      const summaryData = await adminApi.getDedupSummary();
+      setDedupSummary(summaryData);
+    } catch {
+      setDedupSummary(null);
+    }
+
+    try {
+      const groupsData = await adminApi.getDedupGroups();
+      setDedupGroups(groupsData.items);
+      setSelectedKeepByHash((prev) => {
+        const next = { ...prev };
+
+        groupsData.items.forEach((group) => {
+          if (next[group.content_md5] === undefined) {
+            next[group.content_md5] = group.recommended_keep_book_id;
+          }
+        });
+
+        return next;
+      });
+    } catch {
+      setDedupGroups([]);
+    }
+  };
 
   // Validate admin key and fetch orphaned books count
   useEffect(() => {
@@ -33,6 +66,7 @@ export default function Admin() {
     adminApi.getOrphanedBooksCount().then(data => {
       setOrphanedCount(data.orphaned_books);
     }).catch(() => {});
+    loadDedupData().catch(() => {});
   }, [validateKey]);
 
   const handleCleanup = async () => {
@@ -71,6 +105,32 @@ export default function Admin() {
     } catch (error) {
       console.error('Scan failed:', error);
     }
+  };
+
+  const handleResolveGroup = async (group: DedupGroup, mode: 'soft_delete' | 'hard_delete') => {
+    const keepBookId = selectedKeepByHash[group.content_md5];
+
+    if (!keepBookId) {
+      return;
+    }
+
+    const deleteBookIds = group.items
+      .filter((item) => item.id !== keepBookId)
+      .map((item) => item.id);
+
+    if (deleteBookIds.length === 0) {
+      return;
+    }
+
+    await adminApi.resolveDedupGroup({
+      content_md5: group.content_md5,
+      keep_book_id: keepBookId,
+      delete_book_ids: deleteBookIds,
+      mode,
+      delete_source_files: deleteSourceFilesByHash[group.content_md5] ?? false,
+    });
+
+    await loadDedupData();
   };
 
   useEffect(() => {
@@ -275,6 +335,105 @@ export default function Admin() {
               暂无扫描记录
             </div>
           )}
+        </section>
+
+        <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
+          <h2 className="text-lg font-semibold text-gray-800 mb-4">重复书籍</h2>
+          <p className="text-sm text-gray-500 mb-4">
+            重复组 {dedupSummary?.duplicate_groups ?? 0}，重复书籍 {dedupSummary?.duplicate_books ?? 0}
+          </p>
+          <div className="space-y-4">
+            {dedupGroups.length === 0 ? (
+              <div className="text-sm text-gray-500">暂无重复书籍</div>
+            ) : (
+              dedupGroups.map((group) => (
+                <div key={group.content_md5} className="border rounded-lg p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className="font-medium text-gray-800">
+                        {group.content_md5.slice(0, 8)}... ({group.count})
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        建议保留 ID {group.recommended_keep_book_id}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="展开重复组"
+                      aria-expanded={expandedGroups[group.content_md5] ?? false}
+                      onClick={() => setExpandedGroups((prev) => ({
+                        ...prev,
+                        [group.content_md5]: !prev[group.content_md5],
+                      }))}
+                      className="px-3 py-2 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
+                    >
+                      {expandedGroups[group.content_md5] ? '收起' : '展开'}
+                    </button>
+                  </div>
+                  {expandedGroups[group.content_md5] && (
+                    <div className="mt-4 space-y-4">
+                      <div className="space-y-2">
+                        {group.items.map((item) => (
+                          <label
+                            key={item.id}
+                            className="flex items-start gap-3 border rounded-lg p-3 cursor-pointer"
+                          >
+                            <input
+                              type="radio"
+                              name={`keep-${group.content_md5}`}
+                              aria-label={item.title}
+                              checked={selectedKeepByHash[group.content_md5] === item.id}
+                              onChange={() => setSelectedKeepByHash((prev) => ({
+                                ...prev,
+                                [group.content_md5]: item.id,
+                              }))}
+                              className="mt-1"
+                            />
+                            <span className="flex-1">
+                              <span className="block font-medium text-gray-800">{item.title}</span>
+                              <span className="block text-sm text-gray-500">
+                                {item.filename} | 阅读进度 {item.last_read_position} | 章节 {item.chapter_count}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      <label className="flex items-center gap-2 text-sm text-red-600">
+                        <input
+                          type="checkbox"
+                          checked={deleteSourceFilesByHash[group.content_md5] ?? false}
+                          onChange={(event) => setDeleteSourceFilesByHash((prev) => ({
+                            ...prev,
+                            [group.content_md5]: event.target.checked,
+                          }))}
+                        />
+                        同时删除被移除副本的原始文件
+                      </label>
+                      {deleteSourceFilesByHash[group.content_md5] && (
+                        <p className="text-xs text-red-500">将直接删除磁盘文件，无法恢复。</p>
+                      )}
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleResolveGroup(group, 'soft_delete')}
+                          className="px-4 py-2 rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-colors"
+                        >
+                          软删除其余
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleResolveGroup(group, 'hard_delete')}
+                          className="px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
+                        >
+                          硬删除其余
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
         </section>
 
         {/* Security Settings Section */}
