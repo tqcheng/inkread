@@ -1,0 +1,13 @@
+.git
+.gitignore
+.pytest_cache
+.venv
+__pycache__
+AGENTS.md
+backend/.pytest_cache
+backend/__pycache__
+backend/tests/__pycache__
+frontend/node_modules
+frontend/dist
+frontend/coverage
+books/.DS_Store
