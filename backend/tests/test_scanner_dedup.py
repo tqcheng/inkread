@@ -1,4 +1,5 @@
 import hashlib
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -47,6 +48,51 @@ async def test_scan_single_file_reuses_md5_for_unchanged_file(
     assert message == "skipped_unchanged"
     assert rescanned.content_md5 == original.content_md5
     assert calls["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_single_file_rescans_same_size_file_when_mtime_changes(
+    tmp_path: Path, db_session, monkeypatch
+):
+    file_path = tmp_path / "beta_same_size.txt"
+    original_content = "第一章 A\n\n正文X\n"
+    updated_content = "第一章 B\n\n正文Y\n"
+    assert len(original_content.encode("utf-8")) == len(updated_content.encode("utf-8"))
+
+    file_path.write_text(original_content, encoding="utf-8")
+    original_book, _ = await scan_single_file(file_path, db_session)
+    await db_session.refresh(original_book)
+
+    original_md5 = original_book.content_md5
+    original_size = original_book.file_size
+    original_mtime = original_book.file_mtime
+
+    file_path.write_text(updated_content, encoding="utf-8")
+    assert file_path.stat().st_size == original_size
+
+    next_timestamp = file_path.stat().st_mtime + 5
+    os.utime(file_path, (next_timestamp, next_timestamp))
+
+    calls = {"count": 0}
+
+    from app import services
+
+    original_extract = services.scanner.extract_chapters_and_md5
+
+    def wrapped_extract(path):
+        calls["count"] += 1
+        return original_extract(path)
+
+    monkeypatch.setattr(services.scanner, "extract_chapters_and_md5", wrapped_extract)
+    rescanned, message = await scan_single_file(file_path, db_session)
+
+    await db_session.refresh(rescanned)
+    assert message != "skipped_unchanged"
+    assert calls["count"] == 1
+    assert rescanned.content_md5 == hashlib.md5(updated_content.encode("utf-8")).hexdigest()
+    assert rescanned.content_md5 != original_md5
+    assert rescanned.file_size == original_size
+    assert rescanned.file_mtime != original_mtime
 
 
 @pytest.mark.asyncio
