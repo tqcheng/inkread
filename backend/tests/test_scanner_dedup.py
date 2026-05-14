@@ -1,4 +1,5 @@
 import hashlib
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -34,15 +35,43 @@ async def test_scan_single_file_reuses_md5_for_unchanged_file(
 
     from app import services
 
-    original_extract = services.scanner.extract_chapters
+    original_extract = services.scanner.extract_chapters_and_md5
 
     def wrapped_extract(path):
         calls["count"] += 1
         return original_extract(path)
 
-    monkeypatch.setattr(services.scanner, "extract_chapters", wrapped_extract)
+    monkeypatch.setattr(services.scanner, "extract_chapters_and_md5", wrapped_extract)
     rescanned, message = await scan_single_file(file_path, db_session)
 
     assert message == "skipped_unchanged"
     assert rescanned.content_md5 == original.content_md5
     assert calls["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_single_file_uses_original_bytes_md5_for_converted_file(
+    tmp_path: Path, db_session, monkeypatch
+):
+    file_path = tmp_path / "gamma.txt"
+    raw_content = "第一章 开始\n\n正文内容\n".encode("gbk")
+    file_path.write_bytes(raw_content)
+
+    async def fake_detect_encoding(_file_path):
+        return "GBK", 1.0
+
+    from app import services
+    from app.services import encoding as encoding_service
+
+    monkeypatch.setattr(services.scanner, "detect_encoding", fake_detect_encoding)
+    monkeypatch.setattr(encoding_service, "detect_encoding", fake_detect_encoding)
+
+    book, message = await scan_single_file(file_path, db_session)
+
+    await db_session.refresh(book)
+    current_stat = file_path.stat()
+
+    assert message.startswith("created")
+    assert book.content_md5 == hashlib.md5(raw_content).hexdigest()
+    assert book.file_size == current_stat.st_size
+    assert book.file_mtime == datetime.fromtimestamp(current_stat.st_mtime)

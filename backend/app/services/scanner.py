@@ -187,18 +187,28 @@ async def scan_single_file(
 
         original_encoding = encoding
         is_converted = False
+        content_md5 = None
 
         if encoding and encoding.upper() not in ("UTF-8", "UTF8", "ASCII"):
             # Try to convert to UTF-8 (aggressive mode for scan)
-            converted, convert_msg = await convert_to_utf8(file_path, aggressive=True)
+            converted, convert_msg, original_md5 = await convert_to_utf8(
+                file_path, aggressive=True
+            )
             is_converted = converted
             if converted:
+                content_md5 = original_md5
+                stat = await asyncio.to_thread(os.stat, file_path)
+                file_size = stat.st_size
+                mtime = datetime.fromtimestamp(stat.st_mtime)
                 logger.info(f"Converted {filename} from {encoding} to UTF-8")
             else:
                 logger.warning(f"Failed to convert {filename}: {convert_msg}")
 
-        # Extract chapters (byte positions) and content hash in one pass
-        chapters, content_md5 = extract_chapters_and_md5(file_path)
+        if is_converted:
+            chapters = extract_chapters(file_path)
+        else:
+            # Extract chapters (byte positions) and content hash in one pass
+            chapters, content_md5 = extract_chapters_and_md5(file_path)
 
         # Clean filename to get title
         title = clean_filename(filename)
