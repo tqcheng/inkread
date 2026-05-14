@@ -219,42 +219,42 @@ def _delete_source_files(
 
     for book in duplicates:
         file_path = book.file_path
-        if file_path == keep.file_path:
-            results.append(
-                DedupResolveFileResult(
-                    book_id=book.id,
-                    file_path=file_path,
-                    deleted=False,
-                    reason="kept_file",
-                )
-            )
-            continue
-
-        if file_path in processed_paths:
-            results.append(
-                DedupResolveFileResult(
-                    book_id=book.id,
-                    file_path=file_path,
-                    deleted=False,
-                    reason="duplicate_path",
-                )
-            )
-            continue
-
-        processed_paths.add(file_path)
-        path = Path(file_path)
-        if not path.exists():
-            results.append(
-                DedupResolveFileResult(
-                    book_id=book.id,
-                    file_path=file_path,
-                    deleted=False,
-                    reason="not_found",
-                )
-            )
-            continue
-
         try:
+            if file_path == keep.file_path:
+                results.append(
+                    DedupResolveFileResult(
+                        book_id=book.id,
+                        file_path=file_path,
+                        deleted=False,
+                        reason="kept_file",
+                    )
+                )
+                continue
+
+            if file_path in processed_paths:
+                results.append(
+                    DedupResolveFileResult(
+                        book_id=book.id,
+                        file_path=file_path,
+                        deleted=False,
+                        reason="duplicate_path",
+                    )
+                )
+                continue
+
+            processed_paths.add(file_path)
+            path = Path(file_path)
+            if not path.exists():
+                results.append(
+                    DedupResolveFileResult(
+                        book_id=book.id,
+                        file_path=file_path,
+                        deleted=False,
+                        reason="not_found",
+                    )
+                )
+                continue
+
             path.unlink()
             results.append(
                 DedupResolveFileResult(
@@ -307,6 +307,7 @@ async def resolve_duplicate_group(
 
     _merge_book_state(keep, duplicates)
     await _merge_reading_progress(db, keep, duplicates)
+    await db.flush()
 
     for book in duplicates:
         if request.mode == "soft_delete":
