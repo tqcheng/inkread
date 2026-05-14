@@ -48,12 +48,15 @@ export default function Admin() {
       setDedupSummary(summaryData);
       setDedupGroups(groupsData.items);
       setSelectedKeepByHash((prev) => {
-        const next = { ...prev };
+        const next: Record<string, number> = {};
 
         groupsData.items.forEach((group) => {
-          if (next[group.content_md5] === undefined) {
-            next[group.content_md5] = group.recommended_keep_book_id;
-          }
+          const currentSelection = prev[group.content_md5];
+          const hasCurrentSelection = group.items.some((item) => item.id === currentSelection);
+
+          next[group.content_md5] = hasCurrentSelection
+            ? currentSelection
+            : group.recommended_keep_book_id;
         });
 
         return next;
@@ -115,10 +118,20 @@ export default function Admin() {
   };
 
   const handleResolveGroup = async (group: DedupGroup, mode: 'soft_delete' | 'hard_delete') => {
-    const keepBookId = selectedKeepByHash[group.content_md5];
+    const selectedKeepBookId = selectedKeepByHash[group.content_md5];
+    const keepBookId = group.items.some((item) => item.id === selectedKeepBookId)
+      ? selectedKeepBookId
+      : group.items.find((item) => item.id === group.recommended_keep_book_id)?.id;
 
     if (!keepBookId) {
       return;
+    }
+
+    if (selectedKeepBookId !== keepBookId) {
+      setSelectedKeepByHash((prev) => ({
+        ...prev,
+        [group.content_md5]: keepBookId,
+      }));
     }
 
     const deleteBookIds = group.items

@@ -91,7 +91,22 @@ function createDedupSummary(overrides?: Partial<{ duplicate_groups: number; dupl
   }
 }
 
-function createDedupGroups() {
+function createDedupGroups(overrides?: Partial<{
+  content_md5: string
+  count: number
+  recommended_keep_book_id: number
+  items: Array<{
+    id: number
+    title: string
+    filename: string
+    file_path: string
+    file_size: number | null
+    file_mtime: string | null
+    is_favorite: boolean
+    last_read_position: number
+    chapter_count: number
+  }>
+}>) {
   return {
     items: [{
       content_md5: 'abc',
@@ -121,6 +136,7 @@ function createDedupGroups() {
           chapter_count: 4,
         },
       ],
+      ...overrides,
     }],
   }
 }
@@ -216,6 +232,70 @@ describe('Admin duplicate management', () => {
 
     expect(await findByTextContent('重复组 4，重复书籍 8，已忽略 1')).toBeInTheDocument()
     expect(screen.getByText('暂无重复书籍')).toBeInTheDocument()
+  })
+
+  it('realigns a stale keep selection after refresh before resolving', async () => {
+    scanMocks.scanStatus = {
+      task_id: 'scan-task-1',
+      status: 'completed',
+      progress: { current: 2, total: 2 },
+      result: { scanned: 2, new_books: 1, errors: 0 },
+      error: null,
+      created_at: '2026-05-14T00:00:00Z',
+      started_at: '2026-05-14T00:00:00Z',
+      completed_at: '2026-05-14T00:01:00Z',
+    }
+
+    vi.mocked(adminApi.getDedupGroups)
+      .mockResolvedValueOnce(createDedupGroups())
+      .mockResolvedValueOnce(createDedupGroups({
+        recommended_keep_book_id: 3,
+        items: [
+          {
+            id: 2,
+            title: '旧保留副本',
+            filename: 'b.txt',
+            file_path: '/books/b.txt',
+            file_size: 12,
+            file_mtime: null,
+            is_favorite: true,
+            last_read_position: 20,
+            chapter_count: 4,
+          },
+          {
+            id: 3,
+            title: '新推荐副本',
+            filename: 'c.txt',
+            file_path: '/books/c.txt',
+            file_size: 12,
+            file_mtime: null,
+            is_favorite: false,
+            last_read_position: 5,
+            chapter_count: 4,
+          },
+        ],
+      }))
+
+    render(<Admin />, { wrapper: createWrapper() })
+
+    expect(await findByTextContent('重复组 1，重复书籍 2，已忽略 3')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /展开重复组/i }))
+    fireEvent.click(await screen.findByLabelText('旧副本'))
+    fireEvent.click(screen.getByRole('button', { name: '一键扫描' }))
+
+    await screen.findByLabelText('新推荐副本')
+    fireEvent.click(screen.getByRole('button', { name: '软删除其余' }))
+
+    await waitFor(() => {
+      expect(adminApi.resolveDedupGroup).toHaveBeenCalledWith({
+        content_md5: 'abc',
+        keep_book_id: 3,
+        delete_book_ids: [2],
+        mode: 'soft_delete',
+        delete_source_files: false,
+      })
+    })
   })
 
   it('resolves with file deletion disabled by default', async () => {
