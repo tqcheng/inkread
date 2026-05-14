@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useReaderSettings } from '../../hooks/useReaderSettings';
 import { themes } from './ThemeProvider';
-import { ChevronLeft, Menu, Sun, Moon, Eye, BookOpen, Type, AlignJustify, ArrowLeft, ArrowRight, List, X, Search } from 'lucide-react';
+import { ChevronLeft, Menu, Sun, Moon, Eye, BookOpen, AlignJustify, ArrowLeft, ArrowRight, List, X, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { Chapter, BookSearchResult } from '../../api/types';
 import { useBookSearch } from '../../hooks/useBookSearch';
@@ -67,10 +67,12 @@ export function Toolbar({
   const prevDisabled = canPrev != null ? !canPrev : currentPage <= 0;
   const nextDisabled = canNext != null ? !canNext : currentPage >= totalPages - 1;
   const isPageMode = readingMode !== 'scroll';
-  const pageSummary =
-    currentChapterTitle && isPageMode
-      ? `${currentChapterTitle} · ${Math.min(currentPage + 1, totalPages)} / ${totalPages}`
-      : `${progress}%`;
+  const toolbarPointerClass = show ? 'pointer-events-auto' : 'pointer-events-none';
+  const displayPage = totalPages > 0 ? Math.min(currentPage + 1, totalPages) : 0;
+  const statusTitle = currentChapterTitle || bookTitle;
+  const statusMeta = isPageMode && totalPages > 0
+    ? `${displayPage} / ${totalPages} · ${progress}%`
+    : `${progress}%`;
 
   useEffect(() => {
     setPageJumpValue(String(currentPage + 1));
@@ -103,6 +105,39 @@ export function Toolbar({
     onPageJump(clampedPage - 1);
   };
 
+  const toggleSettings = () => {
+    setShowSettings((previous) => {
+      const next = !previous;
+      if (next) {
+        setShowTOC(false);
+        setShowSearch(false);
+      }
+      return next;
+    });
+  };
+
+  const toggleTOC = () => {
+    setShowTOC((previous) => {
+      const next = !previous;
+      if (next) {
+        setShowSettings(false);
+        setShowSearch(false);
+      }
+      return next;
+    });
+  };
+
+  const toggleSearch = () => {
+    setShowSearch((previous) => {
+      const next = !previous;
+      if (next) {
+        setShowSettings(false);
+        setShowTOC(false);
+      }
+      return next;
+    });
+  };
+
   return (
     <>
       {/* Top Toolbar */}
@@ -112,7 +147,7 @@ export function Toolbar({
         }`}
       >
         <div
-          className="pointer-events-auto mx-auto flex h-14 max-w-5xl items-center rounded-2xl border px-3 shadow-sm backdrop-blur-xl"
+          className={`${toolbarPointerClass} mx-auto flex h-14 max-w-5xl items-center rounded-2xl border px-3 shadow-sm backdrop-blur-xl`}
           style={{
             backgroundColor: 'var(--reader-toolbar-bg)',
             borderColor: 'var(--reader-toolbar-border)',
@@ -128,14 +163,14 @@ export function Toolbar({
           </div>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => { setShowTOC(!showTOC); setShowSearch(false); }}
+              onClick={toggleTOC}
               className="rounded-xl p-2 transition-colors hover:bg-black/5"
               title="目录"
             >
               <List size={20} />
             </button>
             <button
-              onClick={() => { setShowSearch(!showSearch); setShowTOC(false); }}
+              onClick={toggleSearch}
               className="rounded-xl p-2 transition-colors hover:bg-black/5"
               title="搜索"
             >
@@ -152,60 +187,33 @@ export function Toolbar({
         }`}
       >
         <div
-          className="pointer-events-auto mx-auto flex min-h-16 max-w-5xl items-center justify-between gap-3 rounded-[22px] border px-4 py-3 shadow-sm backdrop-blur-xl"
+          className={`${toolbarPointerClass} mx-auto flex min-h-16 max-w-5xl items-center justify-between gap-3 rounded-[22px] border px-4 py-3 shadow-sm backdrop-blur-xl`}
           style={{
             backgroundColor: 'var(--reader-toolbar-bg)',
             borderColor: 'var(--reader-toolbar-border)',
           }}
         >
-          <div className="min-w-0">
-            <span className="block truncate text-sm text-[var(--text-color)]/78">
-              {pageSummary}
+          <div className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium text-[var(--text-color)]/84">
+              {statusTitle}
+            </span>
+            <span className="mt-0.5 block truncate text-xs tracking-[0.12em] text-[var(--text-color)]/56">
+              {statusMeta}
             </span>
           </div>
 
           <div className="flex items-center gap-2">
-          {/* Font Size */}
-          <div className="hidden sm:flex items-center gap-1 mr-4">
-            <Type size={16} className="text-[var(--text-color)]/55" />
-            {fontSizes.map(size => (
-              <button
-                key={size}
-                onClick={() => setFontSize(size)}
-                className={`w-8 h-8 rounded-full flex items-center justify-center text-xs transition-colors ${fontSize === size ? 'bg-black/80 text-white' : 'hover:bg-black/5'}`}
-              >
-                {size}
-              </button>
-            ))}
-          </div>
+            <button
+              onClick={toggleSettings}
+              className="rounded-xl p-2 transition-colors hover:bg-black/5"
+              title="设置"
+            >
+              <Menu size={22} />
+            </button>
 
-          {/* Theme */}
-          <div className="hidden sm:flex items-center gap-1 mr-4">
-            {(Object.keys(themes) as Array<keyof typeof themes>).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTheme(t)}
-                className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${theme === t ? 'bg-black/80 text-white' : 'hover:bg-black/5'}`}
-                style={theme === t ? {} : { backgroundColor: themes[t].bg, color: themes[t].text }}
-                title={themes[t].name}
-              >
-                {themeIcons[t]}
-              </button>
-            ))}
-          </div>
-
-          {/* Menu Button */}
-          <button
-            onClick={() => setShowSettings(!showSettings)}
-            className="rounded-xl p-2 transition-colors hover:bg-black/5"
-            title="设置"
-          >
-            <Menu size={24} />
-          </button>
-
-          {/* Navigation */}
-          {isPageMode && (
-            <>
+            {isPageMode && (
+              <>
+              {/* Navigation */}
               <button
                 onClick={onPrev}
                 disabled={prevDisabled}
@@ -222,120 +230,208 @@ export function Toolbar({
               >
                 <ArrowRight size={24} />
               </button>
-              {onPageJump && totalPages > 0 && (
-                <form onSubmit={handlePageJumpSubmit} className="ml-2 flex items-center gap-2">
-                  <span className="whitespace-nowrap text-xs text-[var(--text-color)]/55">
-                    {currentPage + 1} / {totalPages}
-                  </span>
-                  <input
-                    aria-label="跳转到页码"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={pageJumpValue}
-                    onChange={(event) => setPageJumpValue(event.target.value)}
-                    className="w-14 rounded-full border px-2 py-1 text-sm"
-                    style={{
-                      borderColor: 'var(--reader-toolbar-border)',
-                      backgroundColor: 'color-mix(in srgb, var(--reader-toolbar-bg) 78%, white 22%)',
-                    }}
-                  />
-                  <button
-                    type="submit"
-                    aria-label="跳转页码"
-                    className="rounded-full px-3 py-1 text-sm transition-colors hover:bg-black/5"
-                  >
-                    跳转
-                  </button>
-                </form>
-              )}
-            </>
-          )}
+              </>
+            )}
+          </div>
         </div>
-      </div>
       </div>
 
       {/* Settings Panel */}
       {show && showSettings && (
-        <div
-          className="fixed bottom-20 left-4 right-4 z-40 rounded-[24px] border p-4 shadow-lg backdrop-blur-xl sm:left-6 sm:right-6"
-          style={{
-            backgroundColor: 'var(--reader-toolbar-bg)',
-            borderColor: 'var(--reader-toolbar-border)',
-          }}
-        >
-          <div className="max-w-2xl mx-auto space-y-4">
-            {/* Font Size */}
-            <div>
-              <label className="text-sm font-medium mb-2 block">字号</label>
-              <div className="flex gap-2">
-                {fontSizes.map(size => (
-                  <button
-                    key={size}
-                    onClick={() => setFontSize(size)}
-                    className={`w-10 h-10 rounded-lg flex items-center justify-center ${fontSize === size ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                  >
-                    {size}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Line Height */}
-            <div>
-              <label className="text-sm font-medium mb-2 block">行高</label>
-              <div className="flex gap-2">
-                {lineHeights.map(height => (
-                  <button
-                    key={height}
-                    onClick={() => setLineHeight(height)}
-                    className={`px-4 py-2 rounded-lg ${lineHeight === height ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                  >
-                    {height}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Theme */}
-            <div>
-              <label className="text-sm font-medium mb-2 block">主题</label>
-              <div className="flex gap-2">
-                {(Object.keys(themes) as Array<keyof typeof themes>).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setTheme(t)}
-                    className={`w-12 h-10 rounded-lg flex items-center justify-center gap-1 ${theme === t ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                    style={theme === t ? {} : { backgroundColor: themes[t].bg, color: themes[t].text }}
-                  >
-                    {themeIcons[t]}
-                    <span className="text-xs ml-1">{themes[t].name}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Reading Mode */}
-            <div>
-              <label className="text-sm font-medium mb-2 block">阅读模式</label>
-              <div className="flex gap-2">
+        <>
+          <button
+            type="button"
+            data-testid="settings-backdrop"
+            aria-label="关闭设置遮罩"
+            onClick={() => setShowSettings(false)}
+            className="fixed inset-0 z-30 bg-black/10 backdrop-blur-[2px]"
+          />
+          <div
+            className="fixed top-14 right-0 bottom-16 z-40 flex w-80 max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden border-l shadow-lg backdrop-blur-xl sm:w-96"
+            style={{
+              backgroundColor: 'var(--reader-toolbar-bg)',
+              borderColor: 'var(--reader-toolbar-border)',
+            }}
+          >
+            <div
+              className="flex items-start justify-between gap-4 border-b p-4"
+              style={{ borderColor: 'var(--reader-toolbar-border)' }}
+            >
+                <div>
+                  <h2 className="text-base font-semibold text-[var(--text-color)]">
+                    阅读设置
+                  </h2>
+                  <p className="mt-1 text-sm text-[var(--text-color)]/58">
+                    调整排版与翻页方式，当前进度保持在 {statusMeta}
+                  </p>
+                </div>
                 <button
-                  onClick={() => setReadingMode('page')}
-                  className={`flex-1 py-2 px-4 rounded-lg flex items-center justify-center gap-2 ${readingMode === 'page' ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+                  onClick={() => setShowSettings(false)}
+                  className="rounded-xl p-2 transition-colors hover:bg-black/5"
+                  aria-label="关闭设置"
                 >
-                  <AlignJustify size={18} />
-                  翻页
-                </button>
-                <button
-                  onClick={() => setReadingMode('scroll')}
-                  className={`flex-1 py-2 px-4 rounded-lg flex items-center justify-center gap-2 ${readingMode === 'scroll' ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                >
-                  <AlignJustify size={18} />
-                  滚动
+                  <X size={20} />
                 </button>
               </div>
-            </div>
+
+            <div className="flex-1 space-y-4 overflow-y-auto p-4">
+                <section
+                  className="rounded-2xl border p-4"
+                  style={{ borderColor: 'var(--reader-toolbar-border)' }}
+                >
+                  <label className="mb-3 block text-sm font-medium text-[var(--text-color)]/76">
+                    文字
+                  </label>
+                  <div className="mb-4 flex flex-wrap gap-2">
+                    {fontSizes.map(size => (
+                      <button
+                        key={size}
+                        onClick={() => setFontSize(size)}
+                        className="h-10 rounded-full px-4 text-sm transition-colors"
+                        style={{
+                          backgroundColor:
+                            fontSize === size
+                              ? 'var(--text-color)'
+                              : 'color-mix(in srgb, var(--reader-toolbar-bg) 78%, white 22%)',
+                          color: fontSize === size ? 'var(--bg-color)' : 'var(--text-color)',
+                        }}
+                      >
+                        {size}
+                      </button>
+                    ))}
+                  </div>
+
+                  <label className="mb-3 block text-sm font-medium text-[var(--text-color)]/76">
+                    行高
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {lineHeights.map(height => (
+                      <button
+                        key={height}
+                        onClick={() => setLineHeight(height)}
+                        className="rounded-full px-4 py-2 text-sm transition-colors"
+                        style={{
+                          backgroundColor:
+                            lineHeight === height
+                              ? 'var(--text-color)'
+                              : 'color-mix(in srgb, var(--reader-toolbar-bg) 78%, white 22%)',
+                          color: lineHeight === height ? 'var(--bg-color)' : 'var(--text-color)',
+                        }}
+                      >
+                        {height}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                <section
+                  className="rounded-2xl border p-4"
+                  style={{ borderColor: 'var(--reader-toolbar-border)' }}
+                >
+                  <label className="mb-3 block text-sm font-medium text-[var(--text-color)]/76">
+                    主题
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {(Object.keys(themes) as Array<keyof typeof themes>).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setTheme(t)}
+                        className="flex h-10 items-center justify-center gap-2 rounded-full px-4 text-sm transition-colors"
+                        style={{
+                          backgroundColor:
+                            theme === t
+                              ? 'var(--text-color)'
+                              : themes[t].bg,
+                          color: theme === t ? 'var(--bg-color)' : themes[t].text,
+                        }}
+                      >
+                        {themeIcons[t]}
+                        <span>{themes[t].name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                <section
+                  className="rounded-2xl border p-4"
+                  style={{ borderColor: 'var(--reader-toolbar-border)' }}
+                >
+                  <label className="mb-3 block text-sm font-medium text-[var(--text-color)]/76">
+                    阅读模式
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setReadingMode('page')}
+                      className="flex-1 rounded-2xl px-4 py-3 text-sm transition-colors"
+                      style={{
+                        backgroundColor:
+                          readingMode === 'page'
+                            ? 'var(--text-color)'
+                            : 'color-mix(in srgb, var(--reader-toolbar-bg) 78%, white 22%)',
+                        color: readingMode === 'page' ? 'var(--bg-color)' : 'var(--text-color)',
+                      }}
+                    >
+                      <span className="flex items-center justify-center gap-2">
+                        <AlignJustify size={18} />
+                        翻页
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setReadingMode('scroll')}
+                      className="flex-1 rounded-2xl px-4 py-3 text-sm transition-colors"
+                      style={{
+                        backgroundColor:
+                          readingMode === 'scroll'
+                            ? 'var(--text-color)'
+                            : 'color-mix(in srgb, var(--reader-toolbar-bg) 78%, white 22%)',
+                        color: readingMode === 'scroll' ? 'var(--bg-color)' : 'var(--text-color)',
+                      }}
+                    >
+                      <span className="flex items-center justify-center gap-2">
+                        <AlignJustify size={18} />
+                        滚动
+                      </span>
+                    </button>
+                  </div>
+                </section>
+
+                {isPageMode && onPageJump && totalPages > 0 && (
+                  <section
+                    className="rounded-2xl border p-4"
+                    style={{ borderColor: 'var(--reader-toolbar-border)' }}
+                  >
+                    <label className="mb-3 block text-sm font-medium text-[var(--text-color)]/76">
+                      跳转页码
+                    </label>
+                    <form onSubmit={handlePageJumpSubmit} className="flex items-center gap-3">
+                      <input
+                        aria-label="跳转到页码"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={pageJumpValue}
+                        onChange={(event) => setPageJumpValue(event.target.value)}
+                        className="w-20 rounded-full border px-3 py-2 text-sm"
+                        style={{
+                          borderColor: 'var(--reader-toolbar-border)',
+                          backgroundColor: 'color-mix(in srgb, var(--reader-toolbar-bg) 78%, white 22%)',
+                        }}
+                      />
+                      <span className="text-sm text-[var(--text-color)]/58">
+                        共 {totalPages} 页
+                      </span>
+                      <button
+                        type="submit"
+                        aria-label="跳转页码"
+                        className="rounded-full px-4 py-2 text-sm transition-colors hover:bg-black/5"
+                      >
+                        跳转
+                      </button>
+                    </form>
+                  </section>
+                )}
+              </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* TOC Sidebar */}
