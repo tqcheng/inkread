@@ -1,14 +1,25 @@
 """Admin router - handles admin-only operations."""
 
 import bcrypt
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from pathlib import Path
 
 from app.core.database import get_db
 from app.models import Book
-from app.schemas import AdminBatchDeleteRequest, BookMetadataUpdate, BookResponse, SecuritySettingsRequest
+from app.schemas import (
+    AdminBatchDeleteRequest,
+    BookMetadataUpdate,
+    BookResponse,
+    DedupGroupListResponse,
+    DedupResolveRequest,
+    DedupResolveResponse,
+    DedupSummaryResponse,
+    SecuritySettingsRequest,
+)
+from app.services import dedup as dedup_service
 from app.services.settings_service import get_setting, set_setting, get_app_password_status
 
 router = APIRouter()
@@ -71,6 +82,27 @@ async def update_book_metadata(
 async def validate_admin_key():
     """Validate that admin key is configured (health check)."""
     return {"status": "ok", "message": "Admin endpoint accessible"}
+
+
+@router.get("/dedup/summary", response_model=DedupSummaryResponse)
+async def get_dedup_summary_route(db: AsyncSession = Depends(get_db)):
+    """Get duplicate-content summary for admin dedup tools."""
+    return await dedup_service.get_dedup_summary(db)
+
+
+@router.get("/dedup/groups", response_model=DedupGroupListResponse)
+async def get_dedup_groups_route(db: AsyncSession = Depends(get_db)):
+    """List duplicate-content groups for admin review."""
+    return await dedup_service.list_dedup_groups(db)
+
+
+@router.post("/dedup/resolve", response_model=DedupResolveResponse)
+async def resolve_dedup_group(
+    request: DedupResolveRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve one duplicate-content group by keeping one book and deleting others."""
+    return await dedup_service.resolve_duplicate_group(db, request)
 
 
 @router.get("/cleanup/count")

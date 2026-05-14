@@ -1,8 +1,8 @@
 """Pydantic v2 schemas for API request/response models."""
 
 from datetime import datetime
-from typing import Optional, List, Any
-from pydantic import BaseModel, ConfigDict
+from typing import Optional, List, Any, Literal
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ============== Book Schemas ==============
@@ -257,6 +257,73 @@ class AdminBatchDeleteRequest(BaseModel):
 
     ids: List[int]
     permanent: bool = False
+
+
+class DedupGroupItem(BaseModel):
+    """Single book entry within a duplicate-content group."""
+
+    id: int
+    title: str
+    filename: str
+    file_path: str
+    file_size: Optional[int] = None
+    file_mtime: Optional[datetime] = None
+    is_favorite: bool = False
+    last_read_position: int = 0
+    chapter_count: int = 0
+
+
+class DedupGroupResponse(BaseModel):
+    """A duplicate-content group keyed by content MD5."""
+
+    content_md5: str
+    count: int
+    recommended_keep_book_id: int
+    items: List[DedupGroupItem]
+
+
+class DedupGroupListResponse(BaseModel):
+    """List response for duplicate-content groups."""
+
+    items: List[DedupGroupResponse]
+
+
+class DedupSummaryResponse(BaseModel):
+    """Summary counts for duplicate-content groups."""
+
+    duplicate_groups: int
+    duplicate_books: int
+    ignored_groups: int = 0
+
+
+class DedupResolveRequest(BaseModel):
+    """Request to resolve one duplicate-content group."""
+
+    content_md5: str
+    keep_book_id: int
+    delete_book_ids: List[int]
+    mode: Literal["soft_delete", "hard_delete"]
+    delete_source_files: bool = False
+
+
+class DedupResolveFileResult(BaseModel):
+    """Result for one attempted source-file deletion."""
+
+    book_id: int
+    file_path: str
+    deleted: bool
+    reason: Optional[str] = None
+
+
+class DedupResolveResponse(BaseModel):
+    """Response after resolving a duplicate-content group."""
+
+    content_md5: str
+    keep_book_id: int
+    deleted_book_ids: List[int]
+    mode: Literal["soft_delete", "hard_delete"]
+    delete_source_files: bool = False
+    file_results: List[DedupResolveFileResult] = Field(default_factory=list)
 
 
 class ErrorResponse(BaseModel):
