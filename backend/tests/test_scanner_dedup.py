@@ -340,6 +340,51 @@ async def test_prepare_archives_continues_after_unexpected_zip_error(
     assert valid_archive.with_suffix(".zip.bak").is_file()
 
 
+def _write_legacy_named_zip(zip_path, filename, content, encoding="gbk"):
+    """Write a zip entry where the filename is legacy-encoded but stored via cp437."""
+    filename_bytes = filename.encode(encoding)
+    cp437_filename = filename_bytes.decode("cp437")
+
+    original_encode = zipfile.ZipInfo._encodeFilenameFlags
+
+    def _patched_encode(self):
+        try:
+            return self.filename.encode("cp437"), self.flag_bits
+        except UnicodeEncodeError:
+            return original_encode(self)
+
+    zipfile.ZipInfo._encodeFilenameFlags = _patched_encode
+    try:
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            info = zipfile.ZipInfo(filename=cp437_filename)
+            info.flag_bits &= ~0x800  # Clear UTF-8 flag
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, content)
+    finally:
+        zipfile.ZipInfo._encodeFilenameFlags = original_encode
+
+
+@pytest.mark.asyncio
+async def test_prepare_archives_restores_legacy_chinese_zip_member_name(
+    tmp_path: Path,
+):
+    archive_path = tmp_path / "legacy.zip"
+    extracted_dir = archive_path.with_suffix("")
+    backup_path = archive_path.with_suffix(".zip.bak")
+
+    chinese_name = "第一章.txt"
+    content = "第一章\n\n正文\n"
+    _write_legacy_named_zip(archive_path, chinese_name, content, encoding="gbk")
+
+    assert await prepare_archives(tmp_path) == [
+        {"archive_path": archive_path, "status": "archive_extracted_zip"}
+    ]
+    assert extracted_dir.is_dir()
+    assert (extracted_dir / chinese_name).read_text(encoding="utf-8") == content
+    assert backup_path.is_file()
+    assert archive_path.exists() is False
+
+
 @pytest.mark.asyncio
 async def test_prepare_archives_continues_after_tempdir_creation_error(
     tmp_path: Path, monkeypatch

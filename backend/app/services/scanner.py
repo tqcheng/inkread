@@ -34,6 +34,7 @@ CHAPTER_PATTERNS = [
     r"^\s*第\d+[卷篇].*$",  # 卷/篇格式3: 第1卷、第2篇
 ]
 ARCHIVE_SUFFIXES = {".zip", ".rar"}
+ZIP_LEGACY_FILENAME_ENCODINGS = ("gb18030", "gbk", "big5", "cp437")
 
 
 def clean_filename(filename: str) -> str:
@@ -170,6 +171,41 @@ def _safe_member_destination(root: Path, member_name: str) -> Path:
     return destination
 
 
+def _filename_quality_score(filename: str) -> int:
+    """Return a quality score for a decoded filename; lower is better."""
+    score = 0
+    for ch in filename:
+        if ch == "\ufffd":
+            score += 1000
+        elif "\u4e00" <= ch <= "\u9fff":
+            score -= 20
+        elif "\u2500" <= ch <= "\u257f":
+            score += 50
+        elif "\u00c0" <= ch <= "\u00ff":
+            score += 5
+    return score
+
+
+def _decode_zip_member_name(info: zipfile.ZipInfo) -> str:
+    """Decode zip member name, recovering legacy Chinese encodings if needed."""
+    if info.flag_bits & 0x800:
+        return info.filename
+
+    raw_bytes = info.filename.encode("cp437")
+    candidates = []
+    for encoding in ZIP_LEGACY_FILENAME_ENCODINGS:
+        try:
+            candidate = raw_bytes.decode(encoding, errors="replace")
+            candidates.append(candidate)
+        except (UnicodeDecodeError, LookupError):
+            continue
+
+    if not candidates:
+        return info.filename
+
+    return min(candidates, key=_filename_quality_score)
+
+
 def _extract_zip_archive(archive_path: Path, target_dir: Path) -> str:
     """Extract a ZIP archive into target_dir using a temporary sibling directory."""
     try:
@@ -184,7 +220,7 @@ def _extract_zip_archive(archive_path: Path, target_dir: Path) -> str:
     try:
         with zipfile.ZipFile(archive_path) as archive:
             for member in archive.infolist():
-                destination = _safe_member_destination(temp_dir, member.filename)
+                destination = _safe_member_destination(temp_dir, _decode_zip_member_name(member))
 
                 if member.is_dir():
                     destination.mkdir(parents=True, exist_ok=True)
