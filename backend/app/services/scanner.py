@@ -449,6 +449,8 @@ async def scan_library(
 
     start_time = time.time()
 
+    archive_results = await prepare_archives(library_path)
+
     # Find all .txt files recursively
     txt_files = list(library_path.rglob("*.txt"))
 
@@ -466,6 +468,11 @@ async def scan_library(
         "errors": 0,
         "new_books": 0,
         "updated_books": 0,
+        "archives_found": len(archive_results),
+        "archives_extracted": sum(1 for r in archive_results if "extracted" in r["status"]),
+        "archives_skipped": sum(1 for r in archive_results if "skipped" in r["status"]),
+        "archive_errors": sum(1 for r in archive_results if "error" in r["status"]),
+        "archive_details": archive_results,
         "details": [],
     }
 

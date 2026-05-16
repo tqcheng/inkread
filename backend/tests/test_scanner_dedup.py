@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.scanner import find_archives, prepare_archives, scan_single_file
+from app.services.scanner import find_archives, prepare_archives, scan_library, scan_single_file
 from app.services.encoding import convert_to_utf8
 
 
@@ -414,3 +414,61 @@ async def test_prepare_archives_continues_after_tempdir_creation_error(
     assert broken_archive.with_suffix("").exists() is False
     assert valid_archive.with_suffix("").is_dir()
     assert valid_archive.with_suffix(".zip.bak").is_file()
+
+
+@pytest.mark.asyncio
+async def test_scan_library_extracts_zip_then_scans_txt(tmp_path: Path, session_factory):
+    archive_path = tmp_path / "series.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("chapter1.txt", "第一章\n\n正文内容\n")
+
+    stats = await scan_library(tmp_path, session_factory)
+
+    assert stats["archives_found"] == 1
+    assert stats["archives_extracted"] == 1
+    assert stats["archives_skipped"] == 0
+    assert stats["archive_errors"] == 0
+    assert stats["total_files"] == 1
+    assert stats["scanned"] == 1
+    assert stats["new_books"] == 1
+
+    backup_path = archive_path.with_suffix(".zip.bak")
+    assert backup_path.is_file()
+    assert archive_path.exists() is False
+
+    extracted_txt = tmp_path / "series" / "chapter1.txt"
+    assert extracted_txt.is_file()
+
+    assert any("archive_extracted" in d["status"] for d in stats["archive_details"])
+
+
+@pytest.mark.asyncio
+async def test_scan_library_ignores_zip_backups(tmp_path: Path, session_factory):
+    backup_path = tmp_path / "series.zip.bak"
+    with zipfile.ZipFile(backup_path, "w") as archive:
+        archive.writestr("chapter1.txt", "第一章\n\n正文内容\n")
+
+    stats = await scan_library(tmp_path, session_factory)
+
+    assert stats["archives_found"] == 0
+    assert stats["total_files"] == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_library_reports_unsupported_rar_and_continues_scanning_txt(tmp_path: Path, session_factory):
+    from app.services.scanner import scan_library
+
+    rar_path = tmp_path / "packed.rar"
+    rar_path.write_bytes(b"not really rar")
+    (tmp_path / "plain.txt").write_text("第一章 普通书\n正文", encoding="utf-8")
+
+    stats = await scan_library(tmp_path, session_factory)
+
+    assert stats["archives_found"] == 1
+    assert stats["archive_errors"] == 1
+    assert any(d["status"] == "archive_error_rar_unsupported" for d in stats["archive_details"])
+    assert rar_path.exists()
+    assert not rar_path.with_suffix(".rar.bak").exists()
+    assert stats["total_files"] == 1
+    assert stats["scanned"] == 1
+    assert stats["new_books"] == 1
