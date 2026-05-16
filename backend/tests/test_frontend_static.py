@@ -113,3 +113,84 @@ async def test_init_db_adds_dedup_columns_for_existing_books_table(tmp_path: Pat
     finally:
         database.engine = original_engine
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_init_db_migrates_books_to_unique_file_path(tmp_path: Path):
+    db_path = tmp_path / "tmp_book_identity_test.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", echo=False, future=True)
+    original_engine = database.engine
+
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE books (
+                        id INTEGER PRIMARY KEY,
+                        title VARCHAR(255) NOT NULL,
+                        filename VARCHAR(255) NOT NULL UNIQUE,
+                        file_path VARCHAR(500) NOT NULL,
+                        file_size BIGINT,
+                        content_md5 VARCHAR(32),
+                        file_mtime DATETIME,
+                        dedup_ignored_at DATETIME,
+                        category VARCHAR(50),
+                        category_confidence FLOAT,
+                        tags JSON,
+                        tags_source VARCHAR(20),
+                        encoding_original VARCHAR(20),
+                        is_utf8_converted BOOLEAN,
+                        created_at DATETIME NOT NULL,
+                        updated_at DATETIME NOT NULL,
+                        is_favorite BOOLEAN,
+                        is_deleted BOOLEAN,
+                        last_read_position INTEGER,
+                        last_read_chapter VARCHAR(255),
+                        ai_analyzed_at DATETIME
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO books (
+                        id, title, filename, file_path, file_size, content_md5, file_mtime,
+                        dedup_ignored_at, category, category_confidence, tags, tags_source,
+                        encoding_original, is_utf8_converted, created_at, updated_at,
+                        is_favorite, is_deleted, last_read_position, last_read_chapter, ai_analyzed_at
+                    ) VALUES
+                        (1, '卷一', 'chapter.txt', '/books/vol1/chapter.txt', 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 0, 0, NULL, NULL)
+                    """
+                )
+            )
+
+        database.engine = engine
+        await database.init_db()
+
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO books (
+                        id, title, filename, file_path, file_size, content_md5, file_mtime,
+                        dedup_ignored_at, category, category_confidence, tags, tags_source,
+                        encoding_original, is_utf8_converted, created_at, updated_at,
+                        is_favorite, is_deleted, last_read_position, last_read_chapter, ai_analyzed_at
+                    ) VALUES
+                        (2, '卷二', 'chapter.txt', '/books/vol2/chapter.txt', 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 0, 0, NULL, NULL)
+                    """
+                )
+            )
+            rows = (
+                await conn.execute(text("SELECT filename, file_path FROM books ORDER BY id ASC"))
+            ).fetchall()
+
+        assert rows == [
+            ("chapter.txt", "/books/vol1/chapter.txt"),
+            ("chapter.txt", "/books/vol2/chapter.txt"),
+        ]
+    finally:
+        database.engine = original_engine
+        await engine.dispose()

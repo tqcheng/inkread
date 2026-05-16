@@ -27,8 +27,8 @@ class Book(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    filename: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
     file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     content_md5: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     file_mtime: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

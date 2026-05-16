@@ -1,12 +1,15 @@
 import hashlib
 import os
+import shutil
 import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 
+from app.models import Book
 from app.services.scanner import find_archives, prepare_archives, scan_library, scan_single_file
 from app.services.encoding import convert_to_utf8
 
@@ -99,7 +102,7 @@ async def test_scan_single_file_rescans_same_size_file_when_mtime_changes(
 
 
 @pytest.mark.asyncio
-async def test_scan_single_file_uses_original_bytes_md5_for_converted_file(
+async def test_scan_single_file_uses_converted_file_md5_and_backs_up_original(
     tmp_path: Path, db_session, monkeypatch
 ):
     file_path = tmp_path / "gamma.txt"
@@ -121,9 +124,39 @@ async def test_scan_single_file_uses_original_bytes_md5_for_converted_file(
     current_stat = file_path.stat()
 
     assert message.startswith("created")
-    assert book.content_md5 == hashlib.md5(raw_content).hexdigest()
+    # content_md5 is MD5 of the converted (UTF-8) file, not the original bytes
+    utf8_content = file_path.read_bytes()
+    assert book.content_md5 == hashlib.md5(utf8_content).hexdigest()
+    assert book.content_md5 != hashlib.md5(raw_content).hexdigest()
+    # Original backup moved to bak/ by scan_single_file after conversion
+    assert (tmp_path / "bak" / "gamma.txt.bak").read_bytes() == raw_content
     assert book.file_size == current_stat.st_size
     assert book.file_mtime == datetime.fromtimestamp(current_stat.st_mtime)
+
+
+@pytest.mark.asyncio
+async def test_scan_library_keeps_books_with_same_filename_in_different_dirs(
+    tmp_path: Path, session_factory
+):
+    first_dir = tmp_path / "vol1"
+    second_dir = tmp_path / "vol2"
+    first_dir.mkdir()
+    second_dir.mkdir()
+
+    first_path = first_dir / "chapter.txt"
+    second_path = second_dir / "chapter.txt"
+    first_path.write_text("第一章 卷一\n\n正文\n", encoding="utf-8")
+    second_path.write_text("第一章 卷二\n\n正文\n", encoding="utf-8")
+
+    stats = await scan_library(tmp_path, session_factory)
+
+    async with session_factory() as session:
+        result = await session.execute(select(Book).order_by(Book.file_path.asc()))
+        books = result.scalars().all()
+
+    assert stats["new_books"] == 2
+    assert len(books) == 2
+    assert [book.file_path for book in books] == [str(first_path), str(second_path)]
 
 
 @pytest.mark.asyncio
@@ -171,13 +204,14 @@ def test_find_archives_includes_zip_and_rar_but_excludes_backups(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_prepare_archives_skips_existing_target_directory(tmp_path: Path):
+async def test_prepare_archives_skips_existing_extracted_file_conflict(tmp_path: Path):
     archive_path = tmp_path / "series.zip"
-    archive_path.write_bytes(b"zip")
-    archive_path.with_suffix("").mkdir()
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("chapter.txt", "第一章\n\n正文\n")
+    (tmp_path / "chapter.txt").write_text("conflict", encoding="utf-8")
 
     assert await prepare_archives(tmp_path) == [
-        {"archive_path": archive_path, "status": "archive_skipped_target_exists"}
+        {"archive_path": archive_path, "status": "archive_skipped_target_conflict"}
     ]
 
 
@@ -205,10 +239,11 @@ async def test_prepare_archives_reports_rar_as_unsupported(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_prepare_archives_reports_existing_target_file_conflict(tmp_path: Path):
+async def test_prepare_archives_reports_existing_extracted_directory_conflict(tmp_path: Path):
     archive_path = tmp_path / "series.zip"
-    archive_path.write_bytes(b"zip")
-    archive_path.with_suffix("").write_text("conflict", encoding="utf-8")
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("nested/chapter.txt", "第一章\n\n正文\n")
+    (tmp_path / "chapter.txt").mkdir()
 
     assert await prepare_archives(tmp_path) == [
         {"archive_path": archive_path, "status": "archive_skipped_target_conflict"}
@@ -216,11 +251,10 @@ async def test_prepare_archives_reports_existing_target_file_conflict(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_prepare_archives_extracts_zip_to_same_name_folder_and_backs_up_source(
+async def test_prepare_archives_extracts_zip_to_archive_directory_and_backs_up_source(
     tmp_path: Path,
 ):
     archive_path = tmp_path / "series.zip"
-    extracted_dir = archive_path.with_suffix("")
     backup_path = tmp_path / "bak" / "series.zip"
 
     with zipfile.ZipFile(archive_path, "w") as archive:
@@ -230,9 +264,8 @@ async def test_prepare_archives_extracts_zip_to_same_name_folder_and_backs_up_so
     assert await prepare_archives(tmp_path) == [
         {"archive_path": archive_path, "status": "archive_extracted_zip"}
     ]
-    assert extracted_dir.is_dir()
-    assert (extracted_dir / "chapter1.txt").read_text(encoding="utf-8") == "第一章\n\n正文\n"
-    assert (extracted_dir / "nested" / "chapter2.txt").read_text(encoding="utf-8") == "第二章\n\n正文\n"
+    assert (tmp_path / "chapter1.txt").read_text(encoding="utf-8") == "第一章\n\n正文\n"
+    assert (tmp_path / "chapter2.txt").read_text(encoding="utf-8") == "第二章\n\n正文\n"
     assert backup_path.is_file()
     assert archive_path.exists() is False
 
@@ -240,20 +273,18 @@ async def test_prepare_archives_extracts_zip_to_same_name_folder_and_backs_up_so
 @pytest.mark.asyncio
 async def test_prepare_archives_rejects_unsafe_zip_member_path(tmp_path: Path):
     archive_path = tmp_path / "unsafe.zip"
-    extracted_dir = archive_path.with_suffix("")
     backup_path = tmp_path / "bak" / "unsafe.zip"
     escaped_path = tmp_path / "escaped.txt"
 
     with zipfile.ZipFile(archive_path, "w") as archive:
         archive.writestr("../escaped.txt", "nope")
 
-    assert await prepare_archives(tmp_path) == [
-        {"archive_path": archive_path, "status": "archive_error_unsafe_path"}
-    ]
-    assert extracted_dir.exists() is False
-    assert backup_path.exists() is False
-    assert archive_path.is_file()
-    assert escaped_path.exists() is False
+    results = await prepare_archives(tmp_path)
+    # Flattening neutralises path traversal (../escaped.txt → escaped.txt)
+    assert len(results) == 1 and results[0]["status"] == "archive_extracted_zip"
+    # The file ends up safely inside the archive directory root
+    assert escaped_path.read_text(encoding="utf-8") == "nope"
+    assert backup_path.is_file()
 
 
 @pytest.mark.asyncio
@@ -269,7 +300,7 @@ async def test_prepare_archives_reports_corrupt_zip_without_stopping(tmp_path: P
         {"archive_path": corrupt_archive, "status": "archive_error_bad_zip"},
         {"archive_path": valid_archive, "status": "archive_extracted_zip"},
     ]
-    assert valid_archive.with_suffix("").is_dir()
+    assert (tmp_path / "chapter.txt").is_file()
     assert (tmp_path / "bak" / "good.zip").is_file()
     assert corrupt_archive.is_file()
     assert corrupt_archive.with_suffix("").exists() is False
@@ -280,7 +311,7 @@ async def test_prepare_archives_cleans_published_target_when_backup_rename_fails
     tmp_path: Path, monkeypatch
 ):
     archive_path = tmp_path / "series.zip"
-    target_dir = archive_path.with_suffix("")
+    extracted_txt = tmp_path / "chapter.txt"
     backup_path = tmp_path / "bak" / "series.zip"
 
     with zipfile.ZipFile(archive_path, "w") as archive:
@@ -298,7 +329,7 @@ async def test_prepare_archives_cleans_published_target_when_backup_rename_fails
     assert await prepare_archives(tmp_path) == [
         {"archive_path": archive_path, "status": "archive_error_filesystem"}
     ]
-    assert target_dir.exists() is False
+    assert extracted_txt.exists() is False
     assert backup_path.exists() is False
     assert archive_path.is_file()
 
@@ -341,7 +372,7 @@ async def test_prepare_archives_continues_after_unexpected_zip_error(
     ]
     assert broken_archive.is_file()
     assert broken_archive.with_suffix("").exists() is False
-    assert valid_archive.with_suffix("").is_dir()
+    assert (tmp_path / "chapter.txt").is_file()
     assert (tmp_path / "bak" / "good.zip").is_file()
 
 
@@ -374,7 +405,6 @@ async def test_prepare_archives_restores_legacy_chinese_zip_member_name(
     tmp_path: Path,
 ):
     archive_path = tmp_path / "legacy.zip"
-    extracted_dir = archive_path.with_suffix("")
     backup_path = tmp_path / "bak" / "legacy.zip"
     chinese_name = "第一章.txt"
     content = "第一章\n\n正文\n"
@@ -383,8 +413,7 @@ async def test_prepare_archives_restores_legacy_chinese_zip_member_name(
     assert await prepare_archives(tmp_path) == [
         {"archive_path": archive_path, "status": "archive_extracted_zip"}
     ]
-    assert extracted_dir.is_dir()
-    assert (extracted_dir / chinese_name).read_text(encoding="utf-8") == content
+    assert (tmp_path / chinese_name).read_text(encoding="utf-8") == content
     assert backup_path.is_file()
     assert archive_path.exists() is False
 
@@ -416,7 +445,7 @@ async def test_prepare_archives_continues_after_tempdir_creation_error(
     ]
     assert broken_archive.is_file()
     assert broken_archive.with_suffix("").exists() is False
-    assert valid_archive.with_suffix("").is_dir()
+    assert (tmp_path / "chapter.txt").is_file()
     assert (tmp_path / "bak" / "good.zip").is_file()
 
 
@@ -440,14 +469,15 @@ async def test_scan_library_extracts_zip_then_scans_txt(tmp_path: Path, session_
     assert backup_path.is_file()
     assert archive_path.exists() is False
 
-    extracted_txt = tmp_path / "series" / "chapter1.txt"
+    extracted_txt = tmp_path / "chapter1.txt"
     assert extracted_txt.is_file()
 
     assert any("archive_extracted" in d["status"] for d in stats["archive_details"])
 
 
 @pytest.mark.asyncio
-async def test_scan_library_ignores_zip_backups(tmp_path: Path, session_factory):
+async def test_scan_library_re_extracts_orphaned_zip_backup(tmp_path: Path, session_factory):
+    # A zip in bak/ without a target dir is an orphaned backup — re-extract it
     bak_dir = tmp_path / "bak"
     bak_dir.mkdir()
     backup_path = bak_dir / "series.zip"
@@ -456,8 +486,10 @@ async def test_scan_library_ignores_zip_backups(tmp_path: Path, session_factory)
 
     stats = await scan_library(tmp_path, session_factory)
 
-    assert stats["archives_found"] == 0
-    assert stats["total_files"] == 0
+    assert stats["archives_found"] == 1
+    assert stats["archives_extracted"] == 1
+    assert (tmp_path / "chapter1.txt").read_text(encoding="utf-8") == "第一章\n\n正文内容\n"
+    assert stats["total_files"] == 1
 
 
 @pytest.mark.asyncio
@@ -481,7 +513,7 @@ async def test_scan_library_reports_unsupported_rar_and_continues_scanning_txt(t
 
 
 @pytest.mark.asyncio
-async def test_prepare_archives_cleans_non_txt_from_extracted_zip(tmp_path: Path):
+async def test_prepare_archives_skips_non_txt_and_flattens_extracted_zip(tmp_path: Path):
     archive_path = tmp_path / "series.zip"
     with zipfile.ZipFile(archive_path, "w") as archive:
         archive.writestr("book.txt", "第一章\n\n正文\n")
@@ -494,13 +526,52 @@ async def test_prepare_archives_cleans_non_txt_from_extracted_zip(tmp_path: Path
         {"archive_path": archive_path, "status": "archive_extracted_zip"}
     ]
 
-    target_dir = tmp_path / "series"
-    assert target_dir.is_dir()
-    assert (target_dir / "book.txt").read_text(encoding="utf-8") == "第一章\n\n正文\n"
-    assert (target_dir / "notes" / "readme.txt").read_text(encoding="utf-8") == "阅读说明\n"
-    assert not (target_dir / "cover.jpg").exists()
-    assert not (target_dir / "metadata.xml").exists()
-    assert not (target_dir / "notes" / "summary.html").exists()
+    assert (tmp_path / "book.txt").read_text(encoding="utf-8") == "第一章\n\n正文\n"
+    # Nested txt flattened to root
+    assert (tmp_path / "readme.txt").read_text(encoding="utf-8") == "阅读说明\n"
+    # Non-txt files never extracted
+    assert not (tmp_path / "cover.jpg").exists()
+    assert not (tmp_path / "metadata.xml").exists()
+    assert not (tmp_path / "notes" / "summary.html").exists()
+    # Empty dir from zip never created
+    assert not (tmp_path / "notes").exists()
 
     assert (tmp_path / "bak" / "series.zip").is_file()
     assert archive_path.exists() is False
+
+
+@pytest.mark.asyncio
+async def test_prepare_archives_re_extracts_from_orphaned_backup(tmp_path: Path):
+    # First extraction: zip → target dir → moved to bak/
+    archive_path = tmp_path / "recover.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("chapter.txt", "第一章\n\n正文\n")
+        archive.writestr("sub/notes.txt", "附录\n")
+
+    assert await prepare_archives(tmp_path) == [
+        {"archive_path": archive_path, "status": "archive_extracted_zip"}
+    ]
+
+    backup_path = tmp_path / "bak" / "recover.zip"
+    chapter_path = tmp_path / "chapter.txt"
+    notes_path = tmp_path / "notes.txt"
+    assert chapter_path.read_text(encoding="utf-8") == "第一章\n\n正文\n"
+    assert notes_path.read_text(encoding="utf-8") == "附录\n"
+    assert backup_path.is_file()
+    assert archive_path.exists() is False
+
+    # Delete extracted txt files and re-scan — should re-extract from backup
+    chapter_path.unlink()
+    notes_path.unlink()
+    assert not chapter_path.exists()
+    assert not notes_path.exists()
+
+    results = await prepare_archives(tmp_path)
+    extracted_results = [r for r in results if r["status"] == "archive_extracted_zip"]
+    assert len(extracted_results) == 1
+    assert extracted_results[0]["archive_path"] == archive_path
+
+    assert chapter_path.read_text(encoding="utf-8") == "第一章\n\n正文\n"
+    assert notes_path.read_text(encoding="utf-8") == "附录\n"
+    # Backup still in place, not double-moved
+    assert backup_path.is_file()

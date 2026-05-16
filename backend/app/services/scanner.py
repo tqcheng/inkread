@@ -162,6 +162,11 @@ def _archive_backup_path(archive_path: Path) -> Path:
     return _archive_backup_dir(archive_path) / archive_path.name
 
 
+def _archive_extract_dir(archive_path: Path) -> Path:
+    """Return the directory where extracted txt files should be published."""
+    return archive_path.parent
+
+
 def _safe_member_destination(root: Path, member_name: str) -> Path:
     """Return a safe extraction destination within root."""
     member_path = Path(member_name)
@@ -197,7 +202,13 @@ def _decode_zip_member_name(info: zipfile.ZipInfo) -> str:
     if info.flag_bits & 0x800:
         return info.filename
 
-    raw_bytes = info.filename.encode("cp437")
+    try:
+        raw_bytes = info.filename.encode("cp437")
+    except UnicodeEncodeError:
+        # Filename cannot be encoded as cp437 — it is already Unicode despite
+        # the missing UTF-8 flag.  Return it as-is.
+        return info.filename
+
     candidates = []
     for encoding in ZIP_LEGACY_FILENAME_ENCODINGS:
         try:
@@ -222,29 +233,67 @@ def _clean_non_txt_files(directory: Path) -> None:
             item.rmdir()
 
 
-def _extract_zip_archive(archive_path: Path, target_dir: Path) -> str:
-    """Extract a ZIP archive into target_dir using a temporary sibling directory."""
+def _zip_txt_output_names(archive_path: Path) -> List[str]:
+    """Return flattened txt output names for a zip archive."""
+    output_names = []
+    with zipfile.ZipFile(archive_path) as archive:
+        for member in archive.infolist():
+            if member.is_dir():
+                continue
+            decoded_name = _decode_zip_member_name(member)
+            if not decoded_name.lower().endswith(".txt"):
+                continue
+            output_names.append(Path(decoded_name).name)
+    return output_names
+
+
+def _extract_zip_archive(
+    archive_path: Path, target_dir: Path, skip_backup: bool = False
+) -> str:
+    """Extract a ZIP archive into target_dir using a temporary sibling directory.
+
+    Only .txt files are extracted; all other members are skipped.
+    Extracted .txt files are placed directly in target_dir (flattened).
+
+    When skip_backup is True the source archive is left in place after extraction
+    (for re-extracting from an already-backed-up archive).
+    """
     try:
         temp_dir = Path(
-            tempfile.mkdtemp(prefix=f"{target_dir.name}.", suffix=".tmp", dir=target_dir.parent)
+            tempfile.mkdtemp(prefix=f"{archive_path.stem}.", suffix=".tmp", dir=target_dir)
         )
     except Exception:
         return "archive_error_filesystem"
 
-    published_target = False
+    published_paths: List[Path] = []
 
     try:
         with zipfile.ZipFile(archive_path) as archive:
+            seen_output_names = set()
             for member in archive.infolist():
-                destination = _safe_member_destination(temp_dir, _decode_zip_member_name(member))
-
                 if member.is_dir():
-                    destination.mkdir(parents=True, exist_ok=True)
                     continue
+                decoded_name = _decode_zip_member_name(member)
+                if not decoded_name.lower().endswith(".txt"):
+                    continue
+                flat_name = Path(decoded_name).name
+                if flat_name in seen_output_names:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    return "archive_skipped_target_conflict"
+                seen_output_names.add(flat_name)
 
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(member) as source, open(destination, "wb") as output:
+                final_destination = _safe_member_destination(target_dir, flat_name)
+                if final_destination.exists():
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    return "archive_skipped_target_conflict"
+
+                staged_destination = _safe_member_destination(temp_dir, flat_name)
+                staged_destination.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as source, open(staged_destination, "wb") as output:
                     shutil.copyfileobj(source, output)
+    except UnicodeEncodeError:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return "archive_error_bad_encoding"
     except ValueError:
         shutil.rmtree(temp_dir, ignore_errors=True)
         return "archive_error_unsafe_path"
@@ -256,17 +305,24 @@ def _extract_zip_archive(archive_path: Path, target_dir: Path) -> str:
         return "archive_error_filesystem"
 
     try:
-        _clean_non_txt_files(temp_dir)
-        temp_dir.rename(target_dir)
-        published_target = True
-        _archive_backup_dir(archive_path).mkdir(parents=True, exist_ok=True)
-        archive_path.rename(_archive_backup_path(archive_path))
+        for staged_file in sorted(temp_dir.iterdir()):
+            final_destination = _safe_member_destination(target_dir, staged_file.name)
+            staged_file.rename(final_destination)
+            published_paths.append(final_destination)
+        if not skip_backup:
+            _archive_backup_dir(archive_path).mkdir(parents=True, exist_ok=True)
+            archive_path.rename(_archive_backup_path(archive_path))
+        shutil.rmtree(temp_dir, ignore_errors=True)
         return "archive_extracted_zip"
     except Exception:
+        for published_path in published_paths:
+            try:
+                if published_path.exists():
+                    published_path.unlink()
+            except Exception:
+                logger.exception("Failed to clean extracted file after publish error: %s", published_path)
         if temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
-        if published_target and target_dir.exists():
-            shutil.rmtree(target_dir, ignore_errors=True)
         return "archive_error_filesystem"
 
 
@@ -275,16 +331,12 @@ async def prepare_archives(library_path: Path) -> List[Dict[str, Any]]:
     results = []
 
     for archive_path in find_archives(library_path):
-        target_dir = archive_path.with_suffix("")
         backup_path = _archive_backup_path(archive_path)
 
-        if target_dir.is_dir():
-            status = "archive_skipped_target_exists"
-        elif target_dir.is_file():
-            status = "archive_skipped_target_conflict"
-        elif backup_path.exists():
+        if backup_path.exists():
             status = "archive_skipped_backup_exists"
         elif archive_path.suffix.lower() == ".zip":
+            target_dir = _archive_extract_dir(archive_path)
             status = await asyncio.to_thread(_extract_zip_archive, archive_path, target_dir)
         elif archive_path.suffix.lower() == ".rar":
             status = "archive_error_rar_unsupported"
@@ -292,6 +344,41 @@ async def prepare_archives(library_path: Path) -> List[Dict[str, Any]]:
             status = "archive_error_unsupported_archive"
 
         results.append({"archive_path": archive_path, "status": status})
+
+    # Re-extract orphaned backups: a zip was previously extracted and moved to
+    # bak/, but its target directory has since been deleted.
+    for bak_dir in sorted(library_path.rglob("bak")):
+        if not bak_dir.is_dir():
+            continue
+        for archive_path in sorted(bak_dir.iterdir()):
+            if not archive_path.is_file() or archive_path.suffix.lower() != ".zip":
+                continue
+            # Reconstruct the original archive location: it was a sibling of bak/
+            original_archive = bak_dir.parent / archive_path.name
+            target_dir = _archive_extract_dir(original_archive)
+
+            if original_archive.exists():
+                continue
+
+            try:
+                output_names = await asyncio.to_thread(_zip_txt_output_names, archive_path)
+            except Exception:
+                output_names = []
+
+            if output_names:
+                output_paths = [target_dir / name for name in output_names]
+                if all(path.is_file() for path in output_paths):
+                    continue
+                if any(path.exists() for path in output_paths):
+                    continue
+
+            if target_dir.is_file():
+                continue
+
+            status = await asyncio.to_thread(
+                _extract_zip_archive, archive_path, target_dir, skip_backup=True
+            )
+            results.append({"archive_path": original_archive, "status": status})
 
     return results
 
@@ -327,7 +414,7 @@ async def scan_single_file(
 
         # Check if file already exists in database
         existing_result = await db_session.execute(
-            select(Book).where(Book.filename == filename)
+            select(Book).where(Book.file_path == str(file_path))
         )
         existing_book = existing_result.scalar_one_or_none()
 
@@ -353,12 +440,19 @@ async def scan_single_file(
 
         if encoding and encoding.upper() not in ("UTF-8", "UTF8", "ASCII"):
             # Try to convert to UTF-8 (aggressive mode for scan)
-            converted, convert_msg, original_md5 = await convert_to_utf8(
+            converted, convert_msg, _original_md5 = await convert_to_utf8(
                 file_path, aggressive=True
             )
             is_converted = converted
             if converted:
-                content_md5 = original_md5
+                # Move the .txt.bak backup created by convert_to_utf8 to bak/
+                bak_path = file_path.with_suffix('.txt.bak')
+                if bak_path.exists():
+                    bak_dir = file_path.parent / "bak"
+                    await asyncio.to_thread(bak_dir.mkdir, parents=True, exist_ok=True)
+                    await asyncio.to_thread(
+                        shutil.move, str(bak_path), str(bak_dir / bak_path.name)
+                    )
                 stat = await asyncio.to_thread(os.stat, file_path)
                 file_size = stat.st_size
                 mtime = datetime.fromtimestamp(stat.st_mtime)
@@ -366,11 +460,8 @@ async def scan_single_file(
             else:
                 logger.warning(f"Failed to convert {filename}: {convert_msg}")
 
-        if is_converted:
-            chapters = extract_chapters(file_path)
-        else:
-            # Extract chapters (byte positions) and content hash in one pass
-            chapters, content_md5 = extract_chapters_and_md5(file_path)
+        # Extract chapters and compute content MD5 from current file content
+        chapters, content_md5 = extract_chapters_and_md5(file_path)
 
         # Clean filename to get title
         title = clean_filename(filename)
