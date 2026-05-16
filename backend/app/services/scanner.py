@@ -147,13 +147,19 @@ def find_archives(library_path: Path) -> List[Path]:
         if path.is_file()
         and path.suffix.lower() in ARCHIVE_SUFFIXES
         and ".bak" not in {suffix.lower() for suffix in path.suffixes}
+        and "bak" not in path.relative_to(library_path).parts
     ]
     return sorted(archives)
 
 
+def _archive_backup_dir(archive_path: Path) -> Path:
+    """Return the backup directory for extracted archives."""
+    return archive_path.parent / "bak"
+
+
 def _archive_backup_path(archive_path: Path) -> Path:
     """Return the backup path used for extracted archives."""
-    return archive_path.with_suffix(f"{archive_path.suffix}.bak")
+    return _archive_backup_dir(archive_path) / archive_path.name
 
 
 def _safe_member_destination(root: Path, member_name: str) -> Path:
@@ -206,6 +212,16 @@ def _decode_zip_member_name(info: zipfile.ZipInfo) -> str:
     return min(candidates, key=_filename_quality_score)
 
 
+def _clean_non_txt_files(directory: Path) -> None:
+    """Remove all non-.txt files and empty directories."""
+    for item in list(directory.rglob("*")):
+        if item.is_file() and item.suffix.lower() != ".txt":
+            item.unlink()
+    for item in sorted(directory.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if item.is_dir() and not any(item.iterdir()):
+            item.rmdir()
+
+
 def _extract_zip_archive(archive_path: Path, target_dir: Path) -> str:
     """Extract a ZIP archive into target_dir using a temporary sibling directory."""
     try:
@@ -240,8 +256,10 @@ def _extract_zip_archive(archive_path: Path, target_dir: Path) -> str:
         return "archive_error_filesystem"
 
     try:
+        _clean_non_txt_files(temp_dir)
         temp_dir.rename(target_dir)
         published_target = True
+        _archive_backup_dir(archive_path).mkdir(parents=True, exist_ok=True)
         archive_path.rename(_archive_backup_path(archive_path))
         return "archive_extracted_zip"
     except Exception:

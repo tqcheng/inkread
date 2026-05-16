@@ -154,6 +154,7 @@ def test_find_archives_includes_zip_and_rar_but_excludes_backups(tmp_path: Path)
     excluded_zip_backup = tmp_path / "excluded.zip.bak"
     excluded_rar_backup = tmp_path / "nested" / "excluded.rar.bak"
     excluded_uppercase_backup = tmp_path / "uppercase.BAK.zip"
+    excluded_bak_dir_zip = tmp_path / "bak" / "moved.zip"
     ignored_txt = tmp_path / "ignored.txt"
 
     included_zip.write_bytes(b"zip")
@@ -162,6 +163,8 @@ def test_find_archives_includes_zip_and_rar_but_excludes_backups(tmp_path: Path)
     excluded_zip_backup.write_bytes(b"zip backup")
     excluded_rar_backup.write_bytes(b"rar backup")
     excluded_uppercase_backup.write_bytes(b"uppercase backup")
+    excluded_bak_dir_zip.parent.mkdir()
+    excluded_bak_dir_zip.write_bytes(b"already moved")
     ignored_txt.write_text("ignored", encoding="utf-8")
 
     assert find_archives(tmp_path) == [included_zip, included_rar]
@@ -182,7 +185,9 @@ async def test_prepare_archives_skips_existing_target_directory(tmp_path: Path):
 async def test_prepare_archives_skips_existing_backup(tmp_path: Path):
     archive_path = tmp_path / "series.rar"
     archive_path.write_bytes(b"rar")
-    archive_path.with_suffix(".rar.bak").write_bytes(b"backup")
+    bak_dir = tmp_path / "bak"
+    bak_dir.mkdir()
+    (bak_dir / "series.rar").write_bytes(b"backup")
 
     assert await prepare_archives(tmp_path) == [
         {"archive_path": archive_path, "status": "archive_skipped_backup_exists"}
@@ -216,7 +221,7 @@ async def test_prepare_archives_extracts_zip_to_same_name_folder_and_backs_up_so
 ):
     archive_path = tmp_path / "series.zip"
     extracted_dir = archive_path.with_suffix("")
-    backup_path = archive_path.with_suffix(".zip.bak")
+    backup_path = tmp_path / "bak" / "series.zip"
 
     with zipfile.ZipFile(archive_path, "w") as archive:
         archive.writestr("chapter1.txt", "第一章\n\n正文\n")
@@ -236,7 +241,7 @@ async def test_prepare_archives_extracts_zip_to_same_name_folder_and_backs_up_so
 async def test_prepare_archives_rejects_unsafe_zip_member_path(tmp_path: Path):
     archive_path = tmp_path / "unsafe.zip"
     extracted_dir = archive_path.with_suffix("")
-    backup_path = archive_path.with_suffix(".zip.bak")
+    backup_path = tmp_path / "bak" / "unsafe.zip"
     escaped_path = tmp_path / "escaped.txt"
 
     with zipfile.ZipFile(archive_path, "w") as archive:
@@ -265,7 +270,7 @@ async def test_prepare_archives_reports_corrupt_zip_without_stopping(tmp_path: P
         {"archive_path": valid_archive, "status": "archive_extracted_zip"},
     ]
     assert valid_archive.with_suffix("").is_dir()
-    assert valid_archive.with_suffix(".zip.bak").is_file()
+    assert (tmp_path / "bak" / "good.zip").is_file()
     assert corrupt_archive.is_file()
     assert corrupt_archive.with_suffix("").exists() is False
 
@@ -276,7 +281,7 @@ async def test_prepare_archives_cleans_published_target_when_backup_rename_fails
 ):
     archive_path = tmp_path / "series.zip"
     target_dir = archive_path.with_suffix("")
-    backup_path = archive_path.with_suffix(".zip.bak")
+    backup_path = tmp_path / "bak" / "series.zip"
 
     with zipfile.ZipFile(archive_path, "w") as archive:
         archive.writestr("chapter.txt", "第一章\n\n正文\n")
@@ -337,7 +342,7 @@ async def test_prepare_archives_continues_after_unexpected_zip_error(
     assert broken_archive.is_file()
     assert broken_archive.with_suffix("").exists() is False
     assert valid_archive.with_suffix("").is_dir()
-    assert valid_archive.with_suffix(".zip.bak").is_file()
+    assert (tmp_path / "bak" / "good.zip").is_file()
 
 
 def _write_legacy_named_zip(zip_path, filename, content, encoding="gbk"):
@@ -370,8 +375,7 @@ async def test_prepare_archives_restores_legacy_chinese_zip_member_name(
 ):
     archive_path = tmp_path / "legacy.zip"
     extracted_dir = archive_path.with_suffix("")
-    backup_path = archive_path.with_suffix(".zip.bak")
-
+    backup_path = tmp_path / "bak" / "legacy.zip"
     chinese_name = "第一章.txt"
     content = "第一章\n\n正文\n"
     _write_legacy_named_zip(archive_path, chinese_name, content, encoding="gbk")
@@ -413,7 +417,7 @@ async def test_prepare_archives_continues_after_tempdir_creation_error(
     assert broken_archive.is_file()
     assert broken_archive.with_suffix("").exists() is False
     assert valid_archive.with_suffix("").is_dir()
-    assert valid_archive.with_suffix(".zip.bak").is_file()
+    assert (tmp_path / "bak" / "good.zip").is_file()
 
 
 @pytest.mark.asyncio
@@ -432,7 +436,7 @@ async def test_scan_library_extracts_zip_then_scans_txt(tmp_path: Path, session_
     assert stats["scanned"] == 1
     assert stats["new_books"] == 1
 
-    backup_path = archive_path.with_suffix(".zip.bak")
+    backup_path = tmp_path / "bak" / "series.zip"
     assert backup_path.is_file()
     assert archive_path.exists() is False
 
@@ -444,7 +448,9 @@ async def test_scan_library_extracts_zip_then_scans_txt(tmp_path: Path, session_
 
 @pytest.mark.asyncio
 async def test_scan_library_ignores_zip_backups(tmp_path: Path, session_factory):
-    backup_path = tmp_path / "series.zip.bak"
+    bak_dir = tmp_path / "bak"
+    bak_dir.mkdir()
+    backup_path = bak_dir / "series.zip"
     with zipfile.ZipFile(backup_path, "w") as archive:
         archive.writestr("chapter1.txt", "第一章\n\n正文内容\n")
 
@@ -468,7 +474,33 @@ async def test_scan_library_reports_unsupported_rar_and_continues_scanning_txt(t
     assert stats["archive_errors"] == 1
     assert any(d["status"] == "archive_error_rar_unsupported" for d in stats["archive_details"])
     assert rar_path.exists()
-    assert not rar_path.with_suffix(".rar.bak").exists()
+    assert not (tmp_path / "bak" / "packed.rar").exists()
     assert stats["total_files"] == 1
     assert stats["scanned"] == 1
     assert stats["new_books"] == 1
+
+
+@pytest.mark.asyncio
+async def test_prepare_archives_cleans_non_txt_from_extracted_zip(tmp_path: Path):
+    archive_path = tmp_path / "series.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("book.txt", "第一章\n\n正文\n")
+        archive.writestr("cover.jpg", b"fake image")
+        archive.writestr("metadata.xml", b"<meta/>")
+        archive.writestr("notes/readme.txt", "阅读说明\n")
+        archive.writestr("notes/summary.html", b"<html/>")
+
+    assert await prepare_archives(tmp_path) == [
+        {"archive_path": archive_path, "status": "archive_extracted_zip"}
+    ]
+
+    target_dir = tmp_path / "series"
+    assert target_dir.is_dir()
+    assert (target_dir / "book.txt").read_text(encoding="utf-8") == "第一章\n\n正文\n"
+    assert (target_dir / "notes" / "readme.txt").read_text(encoding="utf-8") == "阅读说明\n"
+    assert not (target_dir / "cover.jpg").exists()
+    assert not (target_dir / "metadata.xml").exists()
+    assert not (target_dir / "notes" / "summary.html").exists()
+
+    assert (tmp_path / "bak" / "series.zip").is_file()
+    assert archive_path.exists() is False
