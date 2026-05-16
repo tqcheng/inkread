@@ -5,6 +5,8 @@ import hashlib
 import logging
 import os
 import re
+import shutil
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
@@ -30,6 +32,7 @@ CHAPTER_PATTERNS = [
     r"^\s*第[一二三四五六七八九十百千]+[卷篇].*$",  # 卷/篇格式2: 第一卷、第二篇
     r"^\s*第\d+[卷篇].*$",  # 卷/篇格式3: 第1卷、第2篇
 ]
+ARCHIVE_SUFFIXES = {".zip", ".rar"}
 
 
 def clean_filename(filename: str) -> str:
@@ -132,6 +135,100 @@ def extract_chapters_and_md5(file_path: Path) -> Tuple[List[Dict[str, Any]], str
         )
 
     return chapters, digest.hexdigest()
+
+
+def find_archives(library_path: Path) -> List[Path]:
+    """Return sorted archive paths, excluding backup files."""
+    archives = [
+        path
+        for path in library_path.rglob("*")
+        if path.is_file()
+        and path.suffix.lower() in ARCHIVE_SUFFIXES
+        and ".bak" not in {suffix.lower() for suffix in path.suffixes}
+    ]
+    return sorted(archives)
+
+
+def _archive_backup_path(archive_path: Path) -> Path:
+    """Return the backup path used for extracted archives."""
+    return archive_path.with_suffix(f"{archive_path.suffix}.bak")
+
+
+def _safe_member_destination(root: Path, member_name: str) -> Path:
+    """Return a safe extraction destination within root."""
+    member_path = Path(member_name)
+    if member_path.is_absolute():
+        raise ValueError("unsafe archive member path")
+
+    destination = (root / member_path).resolve()
+    root_resolved = root.resolve()
+
+    if destination != root_resolved and root_resolved not in destination.parents:
+        raise ValueError("unsafe archive member path")
+
+    return destination
+
+
+def _extract_zip_archive(archive_path: Path, target_dir: Path) -> str:
+    """Extract a ZIP archive into target_dir using a temporary sibling directory."""
+    temp_dir = target_dir.with_name(f"{target_dir.name}.tmp")
+
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            temp_dir.mkdir()
+
+            for member in archive.infolist():
+                destination = _safe_member_destination(temp_dir, member.filename)
+
+                if member.is_dir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                    continue
+
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as source, open(destination, "wb") as output:
+                    shutil.copyfileobj(source, output)
+    except ValueError:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return "archive_error_unsafe_path"
+    except zipfile.BadZipFile:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return "archive_error_bad_zip"
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+    temp_dir.rename(target_dir)
+    archive_path.rename(_archive_backup_path(archive_path))
+    return "archive_extracted_zip"
+
+
+async def prepare_archives(library_path: Path) -> List[Dict[str, Any]]:
+    """Prepare archive work items for scanning."""
+    results = []
+
+    for archive_path in find_archives(library_path):
+        target_dir = archive_path.with_suffix("")
+        backup_path = _archive_backup_path(archive_path)
+
+        if target_dir.is_dir():
+            status = "archive_skipped_target_exists"
+        elif target_dir.is_file():
+            status = "archive_skipped_target_conflict"
+        elif backup_path.exists():
+            status = "archive_skipped_backup_exists"
+        elif archive_path.suffix.lower() == ".zip":
+            status = await asyncio.to_thread(_extract_zip_archive, archive_path, target_dir)
+        elif archive_path.suffix.lower() == ".rar":
+            status = "archive_error_rar_unsupported"
+        else:
+            status = "archive_error_unsupported_archive"
+
+        results.append({"archive_path": archive_path, "status": status})
+
+    return results
 
 
 async def scan_single_file(

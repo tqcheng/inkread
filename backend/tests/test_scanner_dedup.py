@@ -1,11 +1,12 @@
 import hashlib
 import os
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from app.services.scanner import scan_single_file
+from app.services.scanner import find_archives, prepare_archives, scan_single_file
 from app.services.encoding import convert_to_utf8
 
 
@@ -144,3 +145,125 @@ async def test_convert_to_utf8_prefers_chinese_encoding_over_cp1252_mojibake(
     assert converted is True
     assert "GB18030" in message
     assert file_path.read_text(encoding="utf-8") == content
+
+
+def test_find_archives_includes_zip_and_rar_but_excludes_backups(tmp_path: Path):
+    included_zip = tmp_path / "included.zip"
+    included_rar = tmp_path / "nested" / "included.rar"
+    excluded_zip_backup = tmp_path / "excluded.zip.bak"
+    excluded_rar_backup = tmp_path / "nested" / "excluded.rar.bak"
+    excluded_uppercase_backup = tmp_path / "uppercase.BAK.zip"
+    ignored_txt = tmp_path / "ignored.txt"
+
+    included_zip.write_bytes(b"zip")
+    included_rar.parent.mkdir()
+    included_rar.write_bytes(b"rar")
+    excluded_zip_backup.write_bytes(b"zip backup")
+    excluded_rar_backup.write_bytes(b"rar backup")
+    excluded_uppercase_backup.write_bytes(b"uppercase backup")
+    ignored_txt.write_text("ignored", encoding="utf-8")
+
+    assert find_archives(tmp_path) == [included_zip, included_rar]
+
+
+@pytest.mark.asyncio
+async def test_prepare_archives_skips_existing_target_directory(tmp_path: Path):
+    archive_path = tmp_path / "series.zip"
+    archive_path.write_bytes(b"zip")
+    archive_path.with_suffix("").mkdir()
+
+    assert await prepare_archives(tmp_path) == [
+        {"archive_path": archive_path, "status": "archive_skipped_target_exists"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prepare_archives_skips_existing_backup(tmp_path: Path):
+    archive_path = tmp_path / "series.rar"
+    archive_path.write_bytes(b"rar")
+    archive_path.with_suffix(".rar.bak").write_bytes(b"backup")
+
+    assert await prepare_archives(tmp_path) == [
+        {"archive_path": archive_path, "status": "archive_skipped_backup_exists"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prepare_archives_reports_rar_as_unsupported(tmp_path: Path):
+    archive_path = tmp_path / "pending.rar"
+    archive_path.write_bytes(b"rar")
+
+    assert await prepare_archives(tmp_path) == [
+        {"archive_path": archive_path, "status": "archive_error_rar_unsupported"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prepare_archives_reports_existing_target_file_conflict(tmp_path: Path):
+    archive_path = tmp_path / "series.zip"
+    archive_path.write_bytes(b"zip")
+    archive_path.with_suffix("").write_text("conflict", encoding="utf-8")
+
+    assert await prepare_archives(tmp_path) == [
+        {"archive_path": archive_path, "status": "archive_skipped_target_conflict"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prepare_archives_extracts_zip_to_same_name_folder_and_backs_up_source(
+    tmp_path: Path,
+):
+    archive_path = tmp_path / "series.zip"
+    extracted_dir = archive_path.with_suffix("")
+    backup_path = archive_path.with_suffix(".zip.bak")
+
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("chapter1.txt", "第一章\n\n正文\n")
+        archive.writestr("nested/chapter2.txt", "第二章\n\n正文\n")
+
+    assert await prepare_archives(tmp_path) == [
+        {"archive_path": archive_path, "status": "archive_extracted_zip"}
+    ]
+    assert extracted_dir.is_dir()
+    assert (extracted_dir / "chapter1.txt").read_text(encoding="utf-8") == "第一章\n\n正文\n"
+    assert (extracted_dir / "nested" / "chapter2.txt").read_text(encoding="utf-8") == "第二章\n\n正文\n"
+    assert backup_path.is_file()
+    assert archive_path.exists() is False
+
+
+@pytest.mark.asyncio
+async def test_prepare_archives_rejects_unsafe_zip_member_path(tmp_path: Path):
+    archive_path = tmp_path / "unsafe.zip"
+    extracted_dir = archive_path.with_suffix("")
+    backup_path = archive_path.with_suffix(".zip.bak")
+    escaped_path = tmp_path / "escaped.txt"
+
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("../escaped.txt", "nope")
+
+    assert await prepare_archives(tmp_path) == [
+        {"archive_path": archive_path, "status": "archive_error_unsafe_path"}
+    ]
+    assert extracted_dir.exists() is False
+    assert backup_path.exists() is False
+    assert archive_path.is_file()
+    assert escaped_path.exists() is False
+
+
+@pytest.mark.asyncio
+async def test_prepare_archives_reports_corrupt_zip_without_stopping(tmp_path: Path):
+    corrupt_archive = tmp_path / "broken.zip"
+    valid_archive = tmp_path / "good.zip"
+
+    corrupt_archive.write_bytes(b"not a zip")
+    with zipfile.ZipFile(valid_archive, "w") as archive:
+        archive.writestr("chapter.txt", "第一章\n\n正文\n")
+
+    assert await prepare_archives(tmp_path) == [
+        {"archive_path": corrupt_archive, "status": "archive_error_bad_zip"},
+        {"archive_path": valid_archive, "status": "archive_extracted_zip"},
+    ]
+    assert valid_archive.with_suffix("").is_dir()
+    assert valid_archive.with_suffix(".zip.bak").is_file()
+    assert corrupt_archive.is_file()
+    assert corrupt_archive.with_suffix("").exists() is False
