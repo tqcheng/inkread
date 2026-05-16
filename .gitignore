@@ -71,6 +71,7 @@ data/
 
 # Superpowers
 .superpowers/
+.worktrees/
 docs/superpowers/*
 docs/superpowers/specs/
 docs/superpowers/plans/
