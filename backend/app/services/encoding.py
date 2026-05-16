@@ -15,6 +15,16 @@ logger = logging.getLogger(__name__)
 # Configuration constants
 CONFIDENCE_THRESHOLD = 0.8
 MAX_DETECT_BYTES = 10000  # Read first 10KB for detection
+CHINESE_ENCODINGS = ('GB18030', 'GBK', 'Big5')
+WESTERN_SINGLE_BYTE_ENCODINGS = ('cp1252', 'ISO-8859-1')
+
+
+def _count_cjk_chars(content: str) -> int:
+    return sum(1 for char in content if '\u4e00' <= char <= '\u9fff')
+
+
+def _count_latin1_mojibake_chars(content: str) -> int:
+    return sum(1 for char in content if '\u00c0' <= char <= '\u00ff')
 
 
 async def detect_encoding(file_path: Path) -> Tuple[Optional[str], float]:
@@ -68,7 +78,7 @@ async def detect_encoding(file_path: Path) -> Tuple[Optional[str], float]:
         return None, 0.0
 
 
-async def _try_decode(raw_data: bytes, encoding: str) -> Tuple[str, int]:
+async def _try_decode(raw_data: bytes, encoding: str) -> Tuple[str, int, int]:
     """
     Try to decode bytes with given encoding.
 
@@ -77,14 +87,22 @@ async def _try_decode(raw_data: bytes, encoding: str) -> Tuple[str, int]:
         encoding: Encoding to try
 
     Returns:
-        Tuple of (decoded_content, error_count)
+        Tuple of (decoded_content, error_count, quality_score)
     """
     try:
         content = raw_data.decode(encoding, errors='replace')
         error_count = content.count('\ufffd')
-        return content, error_count
+        cjk_count = _count_cjk_chars(content)
+        mojibake_count = _count_latin1_mojibake_chars(content)
+        quality_score = (error_count * 1000) + mojibake_count - cjk_count
+        return content, error_count, quality_score
     except Exception:
-        return "", float('inf')
+        return "", float('inf'), float('inf')
+
+
+def _add_unique_encoding(encodings: List[str], encoding: Optional[str]) -> None:
+    if encoding and encoding not in encodings:
+        encodings.append(encoding)
 
 
 async def convert_to_utf8(
@@ -139,14 +157,16 @@ async def convert_to_utf8(
         encodings_to_try: List[str] = []
 
         if confidence >= confidence_threshold:
-            encodings_to_try.append(encoding)
+            _add_unique_encoding(encodings_to_try, encoding)
+            if encoding in WESTERN_SINGLE_BYTE_ENCODINGS:
+                for candidate in CHINESE_ENCODINGS:
+                    _add_unique_encoding(encodings_to_try, candidate)
         elif aggressive:
             # Try detected encoding first, then fallbacks
-            encodings_to_try.append(encoding)
+            _add_unique_encoding(encodings_to_try, encoding)
             fallbacks = ['GBK', 'Big5', 'GB18030', 'cp1252', 'ISO-8859-1']
             for fb in fallbacks:
-                if fb != encoding:
-                    encodings_to_try.append(fb)
+                _add_unique_encoding(encodings_to_try, fb)
         else:
             logger.warning(
                 f"Low confidence ({confidence:.2f} < {confidence_threshold}) for {file_path}, "
@@ -158,15 +178,15 @@ async def convert_to_utf8(
         best_content = ""
         best_encoding = ""
         best_errors = float('inf')
+        best_score = float('inf')
 
         for enc in encodings_to_try:
-            content, error_count = await _try_decode(raw_data, enc)
-            if content and error_count < best_errors:
+            content, error_count, quality_score = await _try_decode(raw_data, enc)
+            if content and quality_score < best_score:
                 best_content = content
                 best_encoding = enc
                 best_errors = error_count
-                if error_count == 0:
-                    break
+                best_score = quality_score
 
         if not best_content:
             logger.error(f"Failed to decode {file_path} with any encoding")

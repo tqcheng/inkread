@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.services.scanner import scan_single_file
+from app.services.encoding import convert_to_utf8
 
 
 @pytest.mark.asyncio
@@ -121,3 +122,25 @@ async def test_scan_single_file_uses_original_bytes_md5_for_converted_file(
     assert book.content_md5 == hashlib.md5(raw_content).hexdigest()
     assert book.file_size == current_stat.st_size
     assert book.file_mtime == datetime.fromtimestamp(current_stat.st_mtime)
+
+
+@pytest.mark.asyncio
+async def test_convert_to_utf8_prefers_chinese_encoding_over_cp1252_mojibake(
+    tmp_path: Path, monkeypatch
+):
+    file_path = tmp_path / "xianlu.txt"
+    content = "第一章 仙路美人图\n她说：你好，修仙路远。\n"
+    file_path.write_bytes(content.encode("gb18030"))
+
+    async def fake_detect_encoding(_file_path):
+        return "cp1252", 0.95
+
+    from app.services import encoding as encoding_service
+
+    monkeypatch.setattr(encoding_service, "detect_encoding", fake_detect_encoding)
+
+    converted, message, _original_md5 = await convert_to_utf8(file_path)
+
+    assert converted is True
+    assert "GB18030" in message
+    assert file_path.read_text(encoding="utf-8") == content
