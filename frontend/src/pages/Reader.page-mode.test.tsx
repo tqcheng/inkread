@@ -32,6 +32,7 @@ const testState = vi.hoisted(() => {
     contentByIndex: {
       0: chapterText,
     } as Record<number, string>,
+    legacyContent: chapterText,
     lastReadPosition: chapterText.indexOf(targetText),
     searchOffset: chapterText.indexOf(targetText),
   }
@@ -64,7 +65,7 @@ vi.mock('../hooks/useBooks', () => ({
   useBookContentQuery: () => ({
     data: {
       book_id: 42,
-      content: 'legacy page content',
+      content: testState.legacyContent,
       next_offset: null,
       is_end: true,
     },
@@ -193,6 +194,7 @@ function resetSingleChapterState() {
     },
   ]
   testState.contentByIndex = { 0: chapterText }
+  testState.legacyContent = chapterText
   testState.lastReadPosition = chapterText.indexOf(testState.targetText)
   testState.searchOffset = testState.lastReadPosition
 }
@@ -214,6 +216,32 @@ describe('Reader page mode', () => {
     expect(screen.getByTestId('page-reader-stage')).toBeInTheDocument()
     await screen.findByText((content) => containsTargetText(content))
     expect(screen.queryByTestId('legacy-page-content')).not.toBeInTheDocument()
+  })
+
+  it('shows first-page content in page mode even when the book has no chapter metadata', async () => {
+    const rawContent = [
+      '下载自搜书吧：www.soushu2023.com',
+      '备用地址：www.soushu2024.com',
+      '帝王成长计划',
+      '',
+      '17岁登基为帝，短短几年间。',
+    ].join('\n')
+
+    testState.chapters = []
+    testState.contentByIndex = {}
+    testState.legacyContent = rawContent
+    testState.lastReadPosition = 0
+
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 720 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 360 })
+
+    renderReader()
+
+    await waitFor(() => {
+      expect(
+        screen.getByText((content) => content.includes('下载自搜书吧：www.soushu2023.com'))
+      ).toBeInTheDocument()
+    })
   })
 
   it('keeps the anchored paragraph visible after a font-size re-pagination', async () => {

@@ -227,4 +227,23 @@ describe('measureChapterPages', () => {
 
     expect(combinedSecondParagraph).toBe(secondParagraph)
   })
+
+  it('does not emit a blank first page when chapter text starts with many empty lines', () => {
+    const pages = measureChapterPages({
+      chapterIndex: 10,
+      text: `${'\n'.repeat(24)}第一章 十景锻\n\n正文开场 ${'内容'.repeat(80)}`,
+      layout: {
+        viewportWidth: 420,
+        viewportHeight: 260,
+        contentWidth: 220,
+        contentHeight: 90,
+        fontSize: 18,
+        lineHeight: 1.7,
+        paragraphGap: 16,
+      },
+    })
+
+    expect(pages.length).toBeGreaterThan(0)
+    expect(pages[0]?.blocks.some((block) => block.kind !== 'blank')).toBe(true)
+  })
 })

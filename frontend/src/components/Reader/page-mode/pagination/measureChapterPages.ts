@@ -236,6 +236,9 @@ function canKeepTitleWithNext(
 
 export function measureChapterPages(input: MeasureChapterPagesInput): MeasuredPage[] {
   const blocks = tokenizeChapter(input.text)
+  const firstContentIndex = blocks.findIndex((block) => block.kind !== 'blank')
+  const visibleBlocks =
+    firstContentIndex > 0 ? blocks.slice(firstContentIndex) : blocks
   const pages: MeasuredPage[] = []
   const maxHeight = input.layout.contentHeight
   const measurer = createBlockMeasurer(input)
@@ -259,13 +262,13 @@ export function measureChapterPages(input: MeasureChapterPagesInput): MeasuredPa
   }
 
   try {
-    for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
-      let currentBlock: MeasuredInlineBlock | null = blocks[blockIndex]
+    for (let blockIndex = 0; blockIndex < visibleBlocks.length; blockIndex += 1) {
+      let currentBlock: MeasuredInlineBlock | null = visibleBlocks[blockIndex]
       let sliceIndex = 0
 
       while (currentBlock) {
         if (currentBlock.kind === 'title' && pageBlocks.length > 0) {
-          const nextBlocks = getKeepWithNextBlocks(blocks, blockIndex + 1)
+          const nextBlocks = getKeepWithNextBlocks(visibleBlocks, blockIndex + 1)
 
           if (
             !canKeepTitleWithNext(

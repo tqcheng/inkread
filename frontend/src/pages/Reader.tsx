@@ -199,16 +199,46 @@ export default function Reader() {
   }, [book?.chapters, isScrollMode]);
 
   const pageChapters = isPageMode ? (book?.chapters || []) : [];
+  const shouldUsePageFallbackContent = isPageMode && pageChapters.length === 0;
+  const {
+    data: pageFallbackContent,
+    error: pageFallbackError,
+    isPending: isPageFallbackLoading,
+  } = useBookContentQuery(
+    bookId,
+    0,
+    200000,
+    undefined,
+    shouldUsePageFallbackContent
+  );
   const {
     contentByIndex,
     errorsByIndex,
     loadingByIndex,
   } = usePageChapterContent(bookId, pageChapters, currentChapterIndex);
 
-  const currentPageChapter = book?.chapters?.[currentChapterIndex];
-  const currentPageChapterText = contentByIndex[currentChapterIndex] || '';
-  const currentPageChapterError = errorsByIndex[currentChapterIndex] || null;
-  const isCurrentPageChapterLoading = loadingByIndex[currentChapterIndex] ?? false;
+  const fallbackPageChapter: Chapter | undefined =
+    shouldUsePageFallbackContent
+      ? {
+          id: -1,
+          book_id: bookId,
+          title: null,
+          position_start: 0,
+          position_end: pageFallbackContent?.content.length ?? null,
+          chapter_index: 0,
+        }
+      : undefined;
+  const currentPageChapter = book?.chapters?.[currentChapterIndex] || fallbackPageChapter;
+  const currentPageChapterText =
+    contentByIndex[currentChapterIndex] ||
+    (shouldUsePageFallbackContent ? (pageFallbackContent?.content || '') : '');
+  const currentPageChapterError =
+    errorsByIndex[currentChapterIndex] ||
+    (pageFallbackError instanceof Error ? pageFallbackError.message : null);
+  const isCurrentPageChapterLoading =
+    shouldUsePageFallbackContent
+      ? isPageFallbackLoading
+      : (loadingByIndex[currentChapterIndex] ?? false);
 
   const {
     pages: chapterPages,
