@@ -1,5 +1,6 @@
 import hashlib
 import os
+import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -267,3 +268,104 @@ async def test_prepare_archives_reports_corrupt_zip_without_stopping(tmp_path: P
     assert valid_archive.with_suffix(".zip.bak").is_file()
     assert corrupt_archive.is_file()
     assert corrupt_archive.with_suffix("").exists() is False
+
+
+@pytest.mark.asyncio
+async def test_prepare_archives_cleans_published_target_when_backup_rename_fails(
+    tmp_path: Path, monkeypatch
+):
+    archive_path = tmp_path / "series.zip"
+    target_dir = archive_path.with_suffix("")
+    backup_path = archive_path.with_suffix(".zip.bak")
+
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("chapter.txt", "第一章\n\n正文\n")
+
+    original_rename = Path.rename
+
+    def failing_rename(self: Path, target):
+        if self == archive_path and Path(target) == backup_path:
+            raise OSError("backup rename failed")
+        return original_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", failing_rename)
+
+    assert await prepare_archives(tmp_path) == [
+        {"archive_path": archive_path, "status": "archive_error_filesystem"}
+    ]
+    assert target_dir.exists() is False
+    assert backup_path.exists() is False
+    assert archive_path.is_file()
+
+
+@pytest.mark.asyncio
+async def test_prepare_archives_continues_after_unexpected_zip_error(
+    tmp_path: Path, monkeypatch
+):
+    broken_archive = tmp_path / "broken.zip"
+    valid_archive = tmp_path / "good.zip"
+
+    with zipfile.ZipFile(broken_archive, "w") as archive:
+        archive.writestr("chapter.txt", "第一章\n\n正文\n")
+    with zipfile.ZipFile(valid_archive, "w") as archive:
+        archive.writestr("chapter.txt", "第二章\n\n正文\n")
+
+    import shutil as shutil_module
+
+    original_copy = shutil_module.copyfileobj
+    original_mkdtemp = tempfile.mkdtemp
+    broken_temp_dir = broken_archive.parent / "broken.fail.tmp"
+
+    def fake_mkdtemp(prefix: str, suffix: str, dir: str):
+        if prefix.startswith("broken."):
+            broken_temp_dir.mkdir()
+            return str(broken_temp_dir)
+        return original_mkdtemp(prefix=prefix, suffix=suffix, dir=dir)
+
+    def failing_copy(source, output, length=0):
+        if getattr(output, "name", "") == str(broken_temp_dir / "chapter.txt"):
+            raise OSError("disk full")
+        return original_copy(source, output, length)
+
+    monkeypatch.setattr(tempfile, "mkdtemp", fake_mkdtemp)
+    monkeypatch.setattr(shutil_module, "copyfileobj", failing_copy)
+
+    assert await prepare_archives(tmp_path) == [
+        {"archive_path": broken_archive, "status": "archive_error_filesystem"},
+        {"archive_path": valid_archive, "status": "archive_extracted_zip"},
+    ]
+    assert broken_archive.is_file()
+    assert broken_archive.with_suffix("").exists() is False
+    assert valid_archive.with_suffix("").is_dir()
+    assert valid_archive.with_suffix(".zip.bak").is_file()
+
+
+@pytest.mark.asyncio
+async def test_prepare_archives_continues_after_tempdir_creation_error(
+    tmp_path: Path, monkeypatch
+):
+    broken_archive = tmp_path / "broken.zip"
+    valid_archive = tmp_path / "good.zip"
+
+    with zipfile.ZipFile(broken_archive, "w") as archive:
+        archive.writestr("chapter.txt", "第一章\n\n正文\n")
+    with zipfile.ZipFile(valid_archive, "w") as archive:
+        archive.writestr("chapter.txt", "第二章\n\n正文\n")
+
+    original_mkdtemp = tempfile.mkdtemp
+
+    def failing_mkdtemp(prefix: str, suffix: str, dir: str):
+        if prefix.startswith("broken."):
+            raise OSError("no space left")
+        return original_mkdtemp(prefix=prefix, suffix=suffix, dir=dir)
+
+    monkeypatch.setattr(tempfile, "mkdtemp", failing_mkdtemp)
+
+    assert await prepare_archives(tmp_path) == [
+        {"archive_path": broken_archive, "status": "archive_error_filesystem"},
+        {"archive_path": valid_archive, "status": "archive_extracted_zip"},
+    ]
+    assert broken_archive.is_file()
+    assert broken_archive.with_suffix("").exists() is False
+    assert valid_archive.with_suffix("").is_dir()
+    assert valid_archive.with_suffix(".zip.bak").is_file()

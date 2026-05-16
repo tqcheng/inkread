@@ -5,6 +5,7 @@ import hashlib
 import logging
 import os
 import re
+import tempfile
 import shutil
 import zipfile
 from datetime import datetime
@@ -171,15 +172,17 @@ def _safe_member_destination(root: Path, member_name: str) -> Path:
 
 def _extract_zip_archive(archive_path: Path, target_dir: Path) -> str:
     """Extract a ZIP archive into target_dir using a temporary sibling directory."""
-    temp_dir = target_dir.with_name(f"{target_dir.name}.tmp")
+    try:
+        temp_dir = Path(
+            tempfile.mkdtemp(prefix=f"{target_dir.name}.", suffix=".tmp", dir=target_dir.parent)
+        )
+    except Exception:
+        return "archive_error_filesystem"
 
-    if temp_dir.exists():
-        shutil.rmtree(temp_dir, ignore_errors=True)
+    published_target = False
 
     try:
         with zipfile.ZipFile(archive_path) as archive:
-            temp_dir.mkdir()
-
             for member in archive.infolist():
                 destination = _safe_member_destination(temp_dir, member.filename)
 
@@ -198,11 +201,19 @@ def _extract_zip_archive(archive_path: Path, target_dir: Path) -> str:
         return "archive_error_bad_zip"
     except Exception:
         shutil.rmtree(temp_dir, ignore_errors=True)
-        raise
+        return "archive_error_filesystem"
 
-    temp_dir.rename(target_dir)
-    archive_path.rename(_archive_backup_path(archive_path))
-    return "archive_extracted_zip"
+    try:
+        temp_dir.rename(target_dir)
+        published_target = True
+        archive_path.rename(_archive_backup_path(archive_path))
+        return "archive_extracted_zip"
+    except Exception:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        if published_target and target_dir.exists():
+            shutil.rmtree(target_dir, ignore_errors=True)
+        return "archive_error_filesystem"
 
 
 async def prepare_archives(library_path: Path) -> List[Dict[str, Any]]:
