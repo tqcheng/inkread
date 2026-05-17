@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useBooksQuery, useToggleFavoriteMutation } from '../hooks/useBooks';
 import { useUIStore } from '../store/useUIStore';
@@ -16,11 +16,18 @@ import Pagination from '../components/Pagination';
 import AdminBar from '../components/AdminBar';
 import LoginOverlay from '../components/LoginOverlay';
 
+type BatchDeleteStatus = {
+  tone: 'success' | 'warning';
+  message: string;
+} | null;
+
 export default function Home() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
+  const [batchDeleteStatus, setBatchDeleteStatus] = useState<BatchDeleteStatus>(null);
+  const suppressNextPageBannerResetRef = useRef(false);
 
   const { viewMode, isAdminMode, selectedBooks, sortBy, sortOrder } = useUIStore();
   const actions = useUIStore((state) => state.actions);
@@ -53,8 +60,17 @@ export default function Home() {
     if (!data || page === currentPage) {
       return;
     }
+    suppressNextPageBannerResetRef.current = true;
     setPage(currentPage);
   }, [currentPage, data, page]);
+
+  useEffect(() => {
+    if (suppressNextPageBannerResetRef.current) {
+      suppressNextPageBannerResetRef.current = false;
+      return;
+    }
+    setBatchDeleteStatus(null);
+  }, [search, selectedCategories, showFavoriteOnly, sortBy, sortOrder, page, viewMode]);
 
   const handleSearch = useCallback((query: string) => {
     setSearch(query);
@@ -91,16 +107,30 @@ export default function Home() {
     toggleFavoriteMutation.mutate({ id: book.id, isFavorite: !book.is_favorite });
   }, [toggleFavoriteMutation]);
 
-  const handleBatchDelete = useCallback(async () => {
-    try {
-      await adminApi.batchDelete(Array.from(selectedBooks));
-      actions.clearSelection();
-      disableAdminMode();
-      queryClient.invalidateQueries({ queryKey: ['books'] });
-    } catch (error) {
-      console.error('Batch delete failed:', error);
-      throw error;
+  const handleBatchDelete = useCallback(async ({ deleteSourceFiles }: { deleteSourceFiles: boolean }) => {
+    setBatchDeleteStatus(null);
+    const result = await adminApi.batchDelete(Array.from(selectedBooks), { deleteSourceFiles });
+    if (result.delete_source_files) {
+      setBatchDeleteStatus(
+        result.kept > 0
+          ? {
+              tone: 'warning',
+              message: `已删除 ${result.deleted} 本书籍记录及对应原始文件，${result.kept} 本因原始文件删除失败而保留。`,
+            }
+          : {
+              tone: 'success',
+              message: `已删除 ${result.deleted} 本书籍记录及原始文件。`,
+            }
+      );
+    } else {
+      setBatchDeleteStatus({
+        tone: 'success',
+        message: `已删除 ${result.deleted} 本书籍记录。`,
+      });
     }
+    actions.clearSelection();
+    disableAdminMode();
+    queryClient.invalidateQueries({ queryKey: ['books'] });
   }, [selectedBooks, actions, disableAdminMode, queryClient]);
 
   const handleBookSelect = useCallback((bookId: number) => {
@@ -175,6 +205,18 @@ export default function Home() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-6">
+        {batchDeleteStatus && (
+          <div
+            className={`mb-4 rounded-lg border px-4 py-3 text-sm ${
+              batchDeleteStatus.tone === 'warning'
+                ? 'border-amber-300 bg-amber-50 text-amber-800'
+                : 'border-green-300 bg-green-50 text-green-800'
+            }`}
+            role="alert"
+          >
+            {batchDeleteStatus.message}
+          </div>
+        )}
         {isLoading || isPageClampPending ? (
           <div className="flex items-center justify-center h-64">
             <div className="text-gray-500">加载中...</div>

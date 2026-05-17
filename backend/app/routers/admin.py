@@ -1,16 +1,19 @@
 """Admin router - handles admin-only operations."""
 
 import bcrypt
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.models import Book
 from app.schemas import (
     AdminBatchDeleteRequest,
+    AdminBatchDeleteResponse,
     BookMetadataUpdate,
     BookResponse,
     DedupGroupListResponse,
@@ -25,12 +28,12 @@ from app.services.settings_service import get_setting, set_setting, get_app_pass
 router = APIRouter()
 
 
-@router.post("/batch-delete")
+@router.post("/batch-delete", response_model=AdminBatchDeleteResponse)
 async def batch_delete_books(
     request: AdminBatchDeleteRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Soft delete books (admin only, requires X-Admin-Key)."""
+    """Delete selected books from the database, optionally deleting source files first."""
     if not request.ids:
         raise HTTPException(status_code=400, detail="ids不能为空")
 
@@ -42,12 +45,85 @@ async def batch_delete_books(
     if not books:
         raise HTTPException(status_code=404, detail="未找到要删除的书籍")
 
+    found_ids = {book.id for book in books}
+    missing_ids = [book_id for book_id in request.ids if book_id not in found_ids]
+    if missing_ids:
+        raise HTTPException(status_code=404, detail="部分书籍不存在或已删除")
+
+    if not request.delete_source_files:
+        for book in books:
+            book.is_deleted = True
+
+        await db.commit()
+        return AdminBatchDeleteResponse(
+            deleted=len(books),
+            kept=0,
+            delete_source_files=False,
+            file_results=[],
+        )
+
+    file_results = []
+    deleted_count = 0
+    staged_paths = []
+
     for book in books:
+        path = Path(book.file_path)
+        if not path.exists():
+            file_results.append(
+                {
+                    "book_id": book.id,
+                    "file_path": book.file_path,
+                    "deleted": False,
+                    "reason": "source file not found",
+                }
+            )
+            continue
+
+        try:
+            backup_path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.batch-delete")
+            path.replace(backup_path)
+        except OSError as exc:
+            file_results.append(
+                {
+                    "book_id": book.id,
+                    "file_path": book.file_path,
+                    "deleted": False,
+                    "reason": str(exc),
+                }
+            )
+            continue
+
         book.is_deleted = True
+        deleted_count += 1
+        staged_paths.append((path, backup_path))
+        file_results.append(
+            {
+                "book_id": book.id,
+                "file_path": book.file_path,
+                "deleted": True,
+                "reason": None,
+            }
+        )
 
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        for original_path, backup_path in reversed(staged_paths):
+            if backup_path.exists():
+                backup_path.replace(original_path)
+        raise
 
-    return {"deleted": len(books)}
+    for _, backup_path in staged_paths:
+        if backup_path.exists():
+            backup_path.unlink()
+
+    return AdminBatchDeleteResponse(
+        deleted=deleted_count,
+        kept=len(books) - deleted_count,
+        delete_source_files=True,
+        file_results=file_results,
+    )
 
 
 @router.put("/metadata/{book_id}", response_model=BookResponse)
@@ -56,7 +132,7 @@ async def update_book_metadata(
     metadata: BookMetadataUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    """Update book metadata (admin only, requires X-Admin-Key)."""
+    """Update book metadata."""
     result = await db.execute(
         select(Book).where(Book.id == book_id, Book.is_deleted == False)
     )
@@ -73,15 +149,16 @@ async def update_book_metadata(
     book.tags_source = "manual"
 
     await db.commit()
-    await db.refresh(book)
+
+    result = await db.execute(
+        select(Book)
+        .where(Book.id == book_id, Book.is_deleted == False)
+        .options(selectinload(Book.chapters))
+    )
+    book = result.scalar_one()
+    book.chapters.sort(key=lambda c: c.chapter_index or 0)
 
     return BookResponse.model_validate(book)
-
-
-@router.get("/validate")
-async def validate_admin_key():
-    """Validate that admin key is configured (health check)."""
-    return {"status": "ok", "message": "Admin endpoint accessible"}
 
 
 @router.get("/dedup/summary", response_model=DedupSummaryResponse)

@@ -1,10 +1,12 @@
 import { Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+
+import type { BatchDeleteOptions } from '../api/types';
 
 interface AdminBarProps {
   selectedCount: number;
   onClearSelection: () => void;
-  onBatchDelete: () => Promise<void> | void;
+  onBatchDelete: (options: BatchDeleteOptions) => Promise<void> | void;
 }
 
 export default function AdminBar({
@@ -14,21 +16,42 @@ export default function AdminBar({
 }: AdminBarProps) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteSourceFiles, setDeleteSourceFiles] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+
+  useEffect(() => {
+    if (selectedCount === 0) {
+      setDeleteError('');
+      setDeleteSourceFiles(false);
+      setShowConfirm(false);
+    }
+  }, [selectedCount]);
 
   const handleDelete = async () => {
     setIsDeleting(true);
+    setDeleteError('');
     try {
-      await onBatchDelete();
+      await onBatchDelete({ deleteSourceFiles });
+      setDeleteError('');
+      setDeleteSourceFiles(false);
       setShowConfirm(false);
     } catch (error) {
       console.error('Batch delete failed:', error);
+      setDeleteError('删除失败，请重试。');
     } finally {
       setIsDeleting(false);
     }
   };
 
   const handleCancel = () => {
+    setDeleteError('');
+    setDeleteSourceFiles(false);
     setShowConfirm(false);
+  };
+
+  const handleOpenConfirm = () => {
+    setDeleteError('');
+    setShowConfirm(true);
   };
 
   if (selectedCount === 0) return null;
@@ -47,7 +70,23 @@ export default function AdminBar({
           <div className="flex items-center gap-3">
             <div className="text-sm">
               <div className="font-medium">确认删除选中的书籍记录？</div>
-              <div className="text-gray-300">此操作只会删除数据库记录，不会删除原始源文件。</div>
+              <label className="mt-2 flex items-center gap-2 text-gray-200">
+                <input
+                  type="checkbox"
+                  checked={deleteSourceFiles}
+                  onChange={(event) => setDeleteSourceFiles(event.target.checked)}
+                  className="h-4 w-4 rounded border-gray-500 bg-gray-800"
+                />
+                同时删除原始文件
+              </label>
+              <div className="text-gray-300">
+                {deleteSourceFiles
+                  ? '只有原始文件删除成功的书籍才会从数据库中移除。失败的书籍会保留。'
+                  : '此操作只会删除数据库记录，不会删除原始源文件。'}
+              </div>
+              {deleteError && (
+                <div className="mt-2 text-red-300" role="alert">{deleteError}</div>
+              )}
             </div>
             <button
               onClick={handleDelete}
@@ -65,7 +104,7 @@ export default function AdminBar({
           </div>
         ) : (
           <button
-            onClick={() => setShowConfirm(true)}
+            onClick={handleOpenConfirm}
             className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm transition-colors flex items-center gap-2"
           >
             <Trash2 className="w-4 h-4" />

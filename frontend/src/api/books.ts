@@ -68,16 +68,7 @@ export const booksApi = {
     return response.data;
   },
 
-  batchDelete: async (ids: number[], adminKey?: string): Promise<void> => {
-    if (adminKey) {
-      const response = await apiClient.post('/admin/batch-delete', {
-        ids,
-        permanent: false,
-      }, {
-        headers: { 'X-Admin-Key': adminKey },
-      });
-      return response.data;
-    }
+  batchDelete: async (ids: number[]): Promise<void> => {
     await apiClient.post('/admin/batch-delete', {
       ids,
       permanent: false,

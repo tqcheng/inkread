@@ -7,7 +7,6 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.database import init_db
-from app.middleware.admin_auth import AdminAuthMiddleware
 from app.routers import admin, ai, auth, books, chapters, scan, settings
 
 
@@ -49,7 +48,6 @@ def resolve_frontend_dist() -> Path | None:
 def create_app(frontend_dist: Path | None = None) -> FastAPI:
     app = FastAPI(title="TXT Reader API", lifespan=lifespan)
 
-    app.add_middleware(AdminAuthMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[

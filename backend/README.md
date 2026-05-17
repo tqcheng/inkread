@@ -70,8 +70,8 @@ backend/
 | POST | `/{book_id}/favorite` | 收藏 |
 | DELETE | `/{book_id}/favorite` | 取消收藏 |
 | PUT | `/{book_id}/progress` | 更新阅读进度 |
-| PUT | `/{book_id}/metadata` | 更新元数据（管理员） |
-| POST | `/batch-delete` | 批量删除（管理员） |
+| PUT | `/{book_id}/metadata` | 更新元数据 |
+| POST | `/batch-delete` | 批量删除 |
 
 ### 章节 `/api/v1/chapters`
 
@@ -115,7 +115,6 @@ backend/
 | `OLLAMA_MODEL` | `qwen2.5:7b` | 本地模型 |
 | `OLLAMA_HOST` | `http://ollama:11434` | Ollama 服务地址 |
 | `OPENAI_API_KEY` | - | OpenAI API 密钥 |
-| `ADMIN_KEY` | `changeme` | 管理员密钥 |
 
 ## 服务详解
 

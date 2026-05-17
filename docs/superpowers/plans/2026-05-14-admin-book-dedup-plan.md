@@ -316,8 +316,6 @@ from sqlalchemy import insert
 
 from app.models import Book
 
-ADMIN_HEADERS = {"X-Admin-Key": "changeme"}
-
 @pytest.mark.asyncio
 async def test_dedup_summary_and_groups(async_client, db_session, tmp_path: Path):
     keep_file = tmp_path / "keep.txt"
@@ -331,8 +329,8 @@ async def test_dedup_summary_and_groups(async_client, db_session, tmp_path: Path
     ])
     await db_session.commit()
 
-    summary = await async_client.get("/api/v1/admin/dedup/summary", headers=ADMIN_HEADERS)
-    groups = await async_client.get("/api/v1/admin/dedup/groups", headers=ADMIN_HEADERS)
+    summary = await async_client.get("/api/v1/admin/dedup/summary")
+    groups = await async_client.get("/api/v1/admin/dedup/groups")
 
     assert summary.status_code == 200
     assert summary.json()["duplicate_groups"] == 1
@@ -355,7 +353,6 @@ async def test_dedup_resolve_soft_delete_preserves_keep_book(async_client, db_se
 
     response = await async_client.post(
         "/api/v1/admin/dedup/resolve",
-        headers=ADMIN_HEADERS,
         json={
             "content_md5": "abc",
             "keep_book_id": keep.id,

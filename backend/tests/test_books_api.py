@@ -135,7 +135,12 @@ class TestBatchDeleteEndpoint:
         )
 
         assert response.status_code == 200
-        assert response.json()["deleted"] == 3
+        assert response.json() == {
+            "deleted": 3,
+            "kept": 0,
+            "delete_source_files": False,
+            "file_results": [],
+        }
 
         from sqlalchemy import select
 

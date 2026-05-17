@@ -1,5 +1,7 @@
 import apiClient from './client';
 import type {
+  BatchDeleteOptions,
+  BatchDeleteResponse,
   Book,
   DedupGroupListResponse,
   DedupResolveRequest,
@@ -11,11 +13,12 @@ import type {
 } from './types';
 
 export const adminApi = {
-  batchDelete: async (ids: number[]): Promise<void> => {
-    await apiClient.post('/admin/batch-delete', {
+  batchDelete: async (ids: number[], options: BatchDeleteOptions = {}): Promise<BatchDeleteResponse> => {
+    const response = await apiClient.post<BatchDeleteResponse>('/admin/batch-delete', {
       ids,
-      permanent: false,
+      delete_source_files: options.deleteSourceFiles ?? false,
     });
+    return response.data;
   },
 
   updateMetadata: async (id: number, data: UpdateMetadataData): Promise<Book> => {
@@ -24,17 +27,6 @@ export const adminApi = {
       tags_source: 'manual',
     });
     return response.data;
-  },
-
-  validateKey: async (adminKey?: string): Promise<boolean> => {
-    try {
-      await apiClient.get('/admin/validate', {
-        headers: adminKey ? { 'X-Admin-Key': adminKey } : undefined,
-      });
-      return true;
-    } catch {
-      return false;
-    }
   },
 
   getDedupSummary: async (): Promise<DedupSummaryResponse> => {

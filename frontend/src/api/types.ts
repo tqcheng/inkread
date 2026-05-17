@@ -73,7 +73,25 @@ export interface BookContentResponse {
 
 export interface BatchDeleteRequest {
   ids: number[];
-  permanent?: boolean;
+  delete_source_files?: boolean;
+}
+
+export interface BatchDeleteOptions {
+  deleteSourceFiles?: boolean;
+}
+
+export interface BatchDeleteFileResult {
+  book_id: number;
+  file_path: string;
+  deleted: boolean;
+  reason: string | null;
+}
+
+export interface BatchDeleteResponse {
+  deleted: number;
+  kept: number;
+  delete_source_files: boolean;
+  file_results: BatchDeleteFileResult[];
 }
 
 export interface ScanRequest {

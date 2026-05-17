@@ -23,9 +23,6 @@ docker-compose --profile ai up -d
 复制 `.env.example` 为 `.env` 并根据需要修改:
 
 ```env
-# 必需
-ADMIN_KEY=your_secure_admin_key_here
-
 # AI 配置（可选）
 AI_PROVIDER=disabled  # enabled: ollama, openai
 OLLAMA_MODEL=qwen2.5:7b

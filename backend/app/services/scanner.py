@@ -72,7 +72,7 @@ def clean_filename(filename: str) -> str:
     return title if title else filename
 
 
-def extract_chapters(file_path: Path) -> List[Dict[str, Any]]:
+def extract_chapters(file_path: Path | str) -> List[Dict[str, Any]]:
     """
     Extract chapter titles and byte positions from a file.
 
@@ -80,12 +80,51 @@ def extract_chapters(file_path: Path) -> List[Dict[str, Any]]:
     Positions are byte offsets (compatible with file.seek).
 
     Args:
-        file_path: Path to the .txt file
+        file_path: Path to the .txt file, or raw text content for legacy callers
 
     Returns:
         List of chapter dicts with title, position_start, and position_end
     """
-    chapters, _ = extract_chapters_and_md5(file_path)
+    if isinstance(file_path, str) and ("\n" in file_path or "\r" in file_path):
+        chapters = []
+        compiled_patterns = [re.compile(p, re.IGNORECASE) for p in CHAPTER_PATTERNS]
+        current_chapter = None
+        current_start = 0
+        position = 0
+
+        for line in file_path.splitlines(keepends=True):
+            normalized_line = line.strip()
+            is_chapter_line = any(pattern.match(normalized_line) for pattern in compiled_patterns)
+
+            if is_chapter_line:
+                if current_chapter is not None:
+                    chapters.append(
+                        {
+                            "title": current_chapter,
+                            "position_start": current_start,
+                            "position_end": position,
+                            "chapter_index": len(chapters),
+                        }
+                    )
+
+                current_chapter = normalized_line
+                current_start = position
+
+            position += len(line.encode("utf-8"))
+
+        if current_chapter is not None:
+            chapters.append(
+                {
+                    "title": current_chapter,
+                    "position_start": current_start,
+                    "position_end": position,
+                    "chapter_index": len(chapters),
+                }
+            )
+
+        return chapters
+
+    chapters, _ = extract_chapters_and_md5(Path(file_path))
     return chapters
 
 

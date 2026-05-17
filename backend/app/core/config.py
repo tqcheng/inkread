@@ -28,9 +28,6 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_MODEL: str = "gpt-4o-mini"
 
-    # Security settings
-    ADMIN_KEY: str = "changeme"
-
     # AI Processing settings
     AI_BATCH_SIZE: int = 5
     AI_CACHE_TTL: int = 2592000  # 30 days in seconds

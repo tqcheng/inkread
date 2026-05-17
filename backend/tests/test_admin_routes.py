@@ -1,4 +1,4 @@
-"""Integration tests for admin routes."""
+"""Integration tests for admin routes without admin-key protection."""
 
 import pytest
 from httpx import AsyncClient
@@ -32,7 +32,12 @@ async def test_batch_delete_without_admin_key_soft_deletes_db_rows_only(
     )
 
     assert response.status_code == 200
-    assert response.json() == {"deleted": 2}
+    assert response.json() == {
+        "deleted": 2,
+        "kept": 0,
+        "delete_source_files": False,
+        "file_results": [],
+    }
 
     result = await db_session.execute(
         select(Book).where(Book.id.in_([book.id for book in books]))
@@ -102,27 +107,6 @@ async def test_reset_without_admin_key_clears_db_tables_only(
 
 
 @pytest.mark.asyncio
-async def test_validate_endpoint_without_admin_key_rejects(
-    async_client: AsyncClient,
-):
-    """Validate endpoint should remain protected without a key."""
-    response = await async_client.get("/api/v1/admin/validate")
-    assert response.status_code == 401
-    assert response.json()["error"] == "UNAUTHORIZED"
-
-
-@pytest.mark.asyncio
-async def test_validate_endpoint_with_admin_key(async_client: AsyncClient):
-    """Validate endpoint should succeed with the configured admin key."""
-    response = await async_client.get(
-        "/api/v1/admin/validate",
-        headers={"X-Admin-Key": "changeme"},
-    )
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"
-
-
-@pytest.mark.asyncio
 async def test_non_admin_endpoint_returns_book_list(async_client: AsyncClient):
     """Non-admin endpoints still work without a key."""
     response = await async_client.get("/api/v1/books/")
@@ -139,3 +123,183 @@ async def test_batch_delete_missing_books_returns_not_found(async_client: AsyncC
         json={"ids": [99999]},
     )
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_with_mixed_valid_and_missing_ids_returns_not_found(
+    async_client: AsyncClient, db_session, tmp_path
+):
+    book_path = tmp_path / "keep-me.txt"
+    book_path.write_text("content", encoding="utf-8")
+
+    book = Book(
+        title="保留书籍",
+        filename=book_path.name,
+        file_path=str(book_path),
+    )
+    db_session.add(book)
+    await db_session.commit()
+    await db_session.refresh(book)
+
+    response = await async_client.post(
+        "/api/v1/admin/batch-delete",
+        json={"ids": [book.id, 99999]},
+    )
+
+    assert response.status_code == 404
+
+    result = await db_session.execute(select(Book).where(Book.id == book.id))
+    updated_book = result.scalar_one()
+    assert updated_book.is_deleted is False
+    assert book_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_with_source_files_only_deletes_db_rows_after_file_removal(
+    async_client: AsyncClient, db_session, tmp_path
+):
+    book_path = tmp_path / "remove-me.txt"
+    book_path.write_text("content", encoding="utf-8")
+
+    book = Book(
+        title="待删源文件",
+        filename=book_path.name,
+        file_path=str(book_path),
+    )
+    db_session.add(book)
+    await db_session.commit()
+    await db_session.refresh(book)
+
+    response = await async_client.post(
+        "/api/v1/admin/batch-delete",
+        json={"ids": [book.id], "delete_source_files": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 1
+    assert response.json()["kept"] == 0
+    assert response.json()["delete_source_files"] is True
+    assert response.json()["file_results"] == [
+        {
+            "book_id": book.id,
+            "file_path": str(book_path),
+            "deleted": True,
+            "reason": None,
+        }
+    ]
+
+    result = await db_session.execute(select(Book).where(Book.id == book.id))
+    updated_book = result.scalar_one()
+    assert updated_book.is_deleted is True
+    assert not book_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_with_source_files_restores_staged_files_when_commit_fails(
+    async_client: AsyncClient, db_session, session_factory, tmp_path, monkeypatch
+):
+    book_path = tmp_path / "restore-me.txt"
+    book_path.write_text("content", encoding="utf-8")
+
+    book = Book(
+        title="恢复书籍",
+        filename=book_path.name,
+        file_path=str(book_path),
+    )
+    db_session.add(book)
+    await db_session.commit()
+    await db_session.refresh(book)
+    book_id = book.id
+
+    async def fail_commit():
+        raise RuntimeError("commit failed")
+
+    monkeypatch.setattr(db_session, "commit", fail_commit)
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await async_client.post(
+            "/api/v1/admin/batch-delete",
+            json={"ids": [book_id], "delete_source_files": True},
+        )
+
+    assert book_path.exists()
+
+    async with session_factory() as verify_session:
+        result = await verify_session.execute(select(Book).where(Book.id == book_id))
+        updated_book = result.scalar_one()
+        assert updated_book.is_deleted is False
+
+
+@pytest.mark.asyncio
+async def test_batch_delete_with_source_files_keeps_books_when_file_deletion_fails(
+    async_client: AsyncClient, db_session, tmp_path
+):
+    missing_path = tmp_path / "missing.txt"
+
+    book = Book(
+        title="保留书籍",
+        filename=missing_path.name,
+        file_path=str(missing_path),
+    )
+    db_session.add(book)
+    await db_session.commit()
+    await db_session.refresh(book)
+
+    response = await async_client.post(
+        "/api/v1/admin/batch-delete",
+        json={"ids": [book.id], "delete_source_files": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 0
+    assert response.json()["kept"] == 1
+    assert response.json()["file_results"] == [
+        {
+            "book_id": book.id,
+            "file_path": str(missing_path),
+            "deleted": False,
+            "reason": "source file not found",
+        }
+    ]
+
+    result = await db_session.execute(select(Book).where(Book.id == book.id))
+    updated_book = result.scalar_one()
+    assert updated_book.is_deleted is False
+
+
+@pytest.mark.asyncio
+async def test_metadata_update_without_admin_key_is_allowed(
+    async_client: AsyncClient, db_session, tmp_path
+):
+    """Metadata updates should no longer require a key."""
+    book_path = tmp_path / "metadata-book.txt"
+    book_path.write_text("metadata", encoding="utf-8")
+
+    book = Book(
+        title="待编辑书籍",
+        filename=book_path.name,
+        file_path=str(book_path),
+        category="old",
+        tags=["legacy"],
+    )
+    db_session.add(book)
+    await db_session.commit()
+
+    response = await async_client.put(
+        f"/api/v1/admin/metadata/{book.id}",
+        json={"category": "wuxia", "tags": ["updated"]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["category"] == "wuxia"
+    assert payload["tags"] == ["updated"]
+    assert payload["tags_source"] == "manual"
+
+
+@pytest.mark.asyncio
+async def test_validate_endpoint_is_removed(async_client: AsyncClient):
+    """The dedicated admin-key validation endpoint should not exist anymore."""
+    response = await async_client.get("/api/v1/admin/validate")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]

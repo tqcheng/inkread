@@ -7,13 +7,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import Admin from './Admin'
 import { adminApi } from '../api/admin'
 import type { DedupGroup } from '../api/types'
-import { useAdminStore } from '../hooks/useAdmin'
 
 let queryClient: QueryClient
 
 vi.mock('../api/admin', () => ({
   adminApi: {
-    validateKey: vi.fn(),
     getOrphanedBooksCount: vi.fn(),
     getDedupSummary: vi.fn(),
     getDedupGroups: vi.fn(),
@@ -108,12 +106,6 @@ function deferred<T>() {
 describe('Admin database maintenance', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    useAdminStore.setState({
-      adminKey: 'server-secret',
-      isValidated: true,
-      isAdminMode: false,
-    })
-    vi.mocked(adminApi.validateKey).mockResolvedValue(true)
     vi.mocked(adminApi.getOrphanedBooksCount).mockResolvedValue({ orphaned_books: 0 })
     vi.mocked(adminApi.getDedupSummary).mockResolvedValue({
       duplicate_groups: 0,
@@ -127,31 +119,8 @@ describe('Admin database maintenance', () => {
     })
   })
 
-  it('accepts and validates a non-default admin key before protected tools load', async () => {
-    useAdminStore.setState({
-      adminKey: null,
-      isValidated: false,
-      isAdminMode: false,
-    })
-
+  it('loads maintenance tools without requiring an admin key', async () => {
     render(<Admin />, { wrapper: createWrapper() })
-
-    expect(
-      screen.getByText('当前未保存管理员密钥，受保护功能将保持只读或不可用。')
-    ).toBeInTheDocument()
-    expect(screen.getByText('输入并验证管理员密钥后可使用重复书籍管理。')).toBeInTheDocument()
-    expect(screen.getByText('输入并验证管理员密钥后可修改安全设置。')).toBeInTheDocument()
-    expect(screen.queryByText('SecuritySettingsSection')).not.toBeInTheDocument()
-    expect(adminApi.getOrphanedBooksCount).not.toHaveBeenCalled()
-
-    fireEvent.change(screen.getByPlaceholderText('输入管理员密钥'), {
-      target: { value: 'server-secret' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: '验证并保存' }))
-
-    await waitFor(() => {
-      expect(adminApi.validateKey).toHaveBeenCalledWith('server-secret')
-    })
 
     await waitFor(() => {
       expect(adminApi.getOrphanedBooksCount).toHaveBeenCalledTimes(1)
@@ -159,11 +128,12 @@ describe('Admin database maintenance', () => {
       expect(adminApi.getDedupGroups).toHaveBeenCalledTimes(1)
     })
 
-    expect(screen.getByText('管理员密钥已验证，可使用受保护功能。')).toBeInTheDocument()
+    expect(screen.queryByText('管理员密钥')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('输入管理员密钥')).not.toBeInTheDocument()
     expect(screen.getByText('SecuritySettingsSection')).toBeInTheDocument()
   })
 
-  it('closes the reset confirmation dialog after a successful reset without asking for ADMIN_KEY', async () => {
+  it('closes the reset confirmation dialog after a successful reset', async () => {
     render(<Admin />, { wrapper: createWrapper() })
 
     fireEvent.click(await screen.findByRole('button', { name: '重置数据库' }))
@@ -172,7 +142,7 @@ describe('Admin database maintenance', () => {
     expect(
       screen.getByText('此操作只会删除数据库记录和设置，不会删除原始源文件。')
     ).toBeInTheDocument()
-    expect(screen.queryByPlaceholderText('输入 ADMIN_KEY')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('输入管理员密钥')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '确认重置' }))
 
@@ -185,7 +155,7 @@ describe('Admin database maintenance', () => {
         screen.queryByRole('heading', { name: '确认重置数据库？' })
       ).not.toBeInTheDocument()
     })
-    expect(screen.queryByPlaceholderText('输入 ADMIN_KEY')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('输入管理员密钥')).not.toBeInTheDocument()
   })
 
   it('keeps API error handling in the reset confirmation dialog', async () => {

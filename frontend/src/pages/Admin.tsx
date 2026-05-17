@@ -4,7 +4,6 @@ import { FolderSearch, RefreshCw, CheckCircle, XCircle, Clock, Loader2, Database
 import { useScanSummary, useScanStatus, useTriggerScanMutation } from '../hooks/useScan';
 import { adminApi } from '../api/admin';
 import type { DedupGroup, DedupResolveResponse, DedupSummaryResponse } from '../api/types';
-import { useAdminStore } from '../hooks/useAdmin';
 import { useQueryClient } from '@tanstack/react-query';
 import { BOOKS_QUERY_KEY, BOOK_QUERY_KEY } from '../hooks/useBooks';
 import SecuritySettingsSection from '../components/SecuritySettingsSection';
@@ -21,9 +20,6 @@ export default function Admin() {
   const { data: currentStatus, isLoading: isStatusLoading } = useScanStatus(currentTaskId);
   const triggerScan = useTriggerScanMutation();
   const queryClient = useQueryClient();
-  const adminKey = useAdminStore(state => state.adminKey);
-  const setAdminKey = useAdminStore(state => state.setAdminKey);
-  const clearAdminKey = useAdminStore(state => state.clearAdminKey);
 
   // Database maintenance state
   const [orphanedCount, setOrphanedCount] = useState<number | null>(null);
@@ -40,11 +36,7 @@ export default function Admin() {
   const [isDedupLoading, setIsDedupLoading] = useState(true);
   const [dedupError, setDedupError] = useState<string | null>(null);
   const [dedupResolveWarning, setDedupResolveWarning] = useState<string | null>(null);
-  const [adminKeyInput, setAdminKeyInput] = useState('');
-  const [adminKeyError, setAdminKeyError] = useState<string | null>(null);
-  const [isAdminKeySaving, setIsAdminKeySaving] = useState(false);
   const maintenanceEpochRef = useRef(0);
-  const hasProtectedAdminKey = Boolean(adminKey);
 
   const clearProtectedMaintenanceState = useCallback((orphanedValue: number | null) => {
     setOrphanedCount(orphanedValue);
@@ -107,52 +99,6 @@ export default function Admin() {
   };
 
   useEffect(() => {
-    setAdminKeyInput(adminKey ?? '');
-  }, [adminKey]);
-
-  const handleAdminKeySave = async () => {
-    const trimmedKey = adminKeyInput.trim();
-
-    if (!trimmedKey) {
-      setAdminKeyError('请输入管理员密钥');
-      return;
-    }
-
-    setIsAdminKeySaving(true);
-    setAdminKeyError(null);
-
-    try {
-      const isValid = await adminApi.validateKey(trimmedKey);
-      if (!isValid) {
-        throw new Error('管理员密钥无效');
-      }
-
-      maintenanceEpochRef.current += 1;
-      setAdminKey(trimmedKey);
-      clearProtectedMaintenanceState(null);
-    } catch (error: any) {
-      clearAdminKey();
-      setAdminKeyError(error?.message || '管理员密钥无效');
-    } finally {
-      setIsAdminKeySaving(false);
-    }
-  };
-
-  const handleAdminKeyClear = () => {
-    maintenanceEpochRef.current += 1;
-    clearAdminKey();
-    setAdminKeyInput('');
-    setAdminKeyError(null);
-    clearProtectedMaintenanceState(null);
-  };
-
-  useEffect(() => {
-    if (!hasProtectedAdminKey) {
-      maintenanceEpochRef.current += 1;
-      clearProtectedMaintenanceState(null);
-      return;
-    }
-
     const requestEpoch = maintenanceEpochRef.current;
     adminApi.getOrphanedBooksCount().then(data => {
       if (requestEpoch !== maintenanceEpochRef.current) {
@@ -162,7 +108,7 @@ export default function Admin() {
       setOrphanedCount(data.orphaned_books);
     }).catch(() => {});
     loadDedupData().catch(() => {});
-  }, [clearProtectedMaintenanceState, hasProtectedAdminKey]);
+  }, [clearProtectedMaintenanceState]);
 
   const handleCleanup = async () => {
     const requestEpoch = maintenanceEpochRef.current;
@@ -346,52 +292,6 @@ export default function Admin() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6">
-        <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-800">🔐 管理员密钥</h2>
-              <p className="text-sm text-gray-500 mt-1">
-                重复书籍、孤立书籍清理和安全设置等受保护功能需要管理员密钥。批量删除与重置数据库不需要。
-              </p>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <input
-                type="password"
-                value={adminKeyInput}
-                onChange={(event) => setAdminKeyInput(event.target.value)}
-                placeholder="输入管理员密钥"
-                className="px-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <button
-                onClick={handleAdminKeySave}
-                disabled={isAdminKeySaving}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  isAdminKeySaving
-                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                    : 'bg-blue-500 text-white hover:bg-blue-600'
-                }`}
-              >
-                {isAdminKeySaving ? '验证中...' : '验证并保存'}
-              </button>
-              {hasProtectedAdminKey && (
-                <button
-                  onClick={handleAdminKeyClear}
-                  className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
-                >
-                  清除
-                </button>
-              )}
-            </div>
-          </div>
-          {adminKeyError ? (
-            <div className="mt-3 text-sm text-red-600">{adminKeyError}</div>
-          ) : hasProtectedAdminKey ? (
-            <div className="mt-3 text-sm text-green-600">管理员密钥已验证，可使用受保护功能。</div>
-          ) : (
-            <div className="mt-3 text-sm text-gray-500">当前未保存管理员密钥，受保护功能将保持只读或不可用。</div>
-          )}
-        </section>
-
         {/* Scan Section */}
         <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
           <div className="flex items-center justify-between mb-4">
@@ -529,9 +429,7 @@ export default function Admin() {
 
         <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">重复书籍</h2>
-          {!hasProtectedAdminKey ? (
-            <div className="text-sm text-gray-500">输入并验证管理员密钥后可使用重复书籍管理。</div>
-          ) : isDedupLoading ? (
+          {isDedupLoading ? (
             <div className="text-sm text-gray-500" role="status">重复书籍加载中...</div>
           ) : dedupError ? (
             <div className="text-sm text-red-600" role="alert">{dedupError}</div>
@@ -661,16 +559,7 @@ export default function Admin() {
         </section>
 
         {/* Security Settings Section */}
-        {hasProtectedAdminKey ? (
-          <SecuritySettingsSection />
-        ) : (
-          <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
-            <h2 className="text-lg font-semibold text-gray-800 mb-2">🔒 安全设置</h2>
-            <p className="text-sm text-gray-500">
-              输入并验证管理员密钥后可修改安全设置。
-            </p>
-          </section>
-        )}
+        <SecuritySettingsSection />
 
         {/* Database Maintenance Section */}
         <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
@@ -689,18 +578,16 @@ export default function Admin() {
                     <span className="font-medium text-gray-800">清理孤立书籍</span>
                   </div>
                   <p className="text-sm text-gray-500 mt-1">
-                    {!hasProtectedAdminKey
-                      ? '输入并验证管理员密钥后可使用该功能'
-                      : orphanedCount === null
-                      ? '检测中...'
-                      : `检测到 ${orphanedCount} 本书籍文件已不存在`}
+                    {orphanedCount === null
+                        ? '检测中...'
+                        : `检测到 ${orphanedCount} 本书籍文件已不存在`}
                   </p>
                 </div>
                 <button
                   onClick={handleCleanup}
-                  disabled={!hasProtectedAdminKey || cleaning || orphanedCount === 0 || orphanedCount === null}
+                  disabled={cleaning || orphanedCount === 0 || orphanedCount === null}
                   className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                    !hasProtectedAdminKey || cleaning || orphanedCount === 0 || orphanedCount === null
+                    cleaning || orphanedCount === 0 || orphanedCount === null
                       ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       : 'bg-orange-500 text-white hover:bg-orange-600'
                   }`}

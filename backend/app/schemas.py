@@ -346,6 +346,22 @@ class BookContentResponse(BaseModel):
     is_end: bool = False
 
 
+class AdminBatchDeleteRequest(BaseModel):
+    """Request to batch-delete selected books."""
+
+    ids: List[int]
+    delete_source_files: bool = False
+
+
+class AdminBatchDeleteResponse(BaseModel):
+    """Response for batch-delete operations."""
+
+    deleted: int
+    kept: int
+    delete_source_files: bool = False
+    file_results: List[DedupResolveFileResult] = Field(default_factory=list)
+
+
 # ============== Auth Schemas ==============
 
 

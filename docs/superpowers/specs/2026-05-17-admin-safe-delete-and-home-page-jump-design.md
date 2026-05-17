@@ -2,7 +2,7 @@
 
 ## Goal
 
-Adjust destructive admin flows so routine library cleanup no longer depends on `admin_key`, and make homepage pagination faster to use by adding a direct page-jump control next to the existing sort controls.
+Adjust destructive admin flows so routine library cleanup uses explicit confirmation instead of a global gate, and make homepage pagination faster to use by adding a direct page-jump control next to the existing sort controls.
 
 This design targets:
 
@@ -15,7 +15,7 @@ This design targets:
 
 In scope:
 
-- remove the current global `X-Admin-Key` requirement for `/api/v1/admin/*`
+- remove the current global maintenance gate for `/api/v1/admin/*`
 - keep batch delete and database reset limited to database effects only
 - add explicit confirmation before batch delete and database reset
 - add a homepage page-jump dropdown near the sort controls
@@ -30,13 +30,13 @@ Out of scope:
 
 ## Current Constraints
 
-Today all `/api/v1/admin/*` endpoints are blocked by `AdminAuthMiddleware` unless `X-Admin-Key` matches the configured key. That conflicts with the new product rule: batch delete and database reset should be available without `admin_key` as long as they do not delete original files.
+At the time of this design, all `/api/v1/admin/*` endpoints were blocked by a global middleware gate. That conflicted with the new product rule: batch delete and database reset should be available as long as they do not delete original files.
 
 The homepage already supports paginated book queries through `page` state and `Pagination`, but there is no direct way to jump to a specific result page from the sort row.
 
 ## Backend Design
 
-Remove the global admin-key gate by deleting the `/api/v1/admin` path check from `AdminAuthMiddleware`.
+Remove the global maintenance gate by deleting the `/api/v1/admin` path check from the middleware layer.
 
 For this change set, `POST /api/v1/admin/batch-delete` and `POST /api/v1/admin/reset` remain safe-by-default operations:
 
@@ -61,7 +61,7 @@ The admin page database reset action will also require a confirmation step befor
 - source files on disk will be preserved
 - the library can be scanned again afterward
 
-These confirmations replace the old assumption that the presence of `admin_key` itself was the destructive safeguard.
+These confirmations replace the old assumption that the global gate itself was the destructive safeguard.
 
 ### Homepage page-jump dropdown
 
@@ -114,8 +114,8 @@ The control should reuse current pagination state instead of introducing a secon
 
 Backend coverage:
 
-- requests to `/api/v1/admin/batch-delete` succeed without `X-Admin-Key`
-- requests to `/api/v1/admin/reset` succeed without `X-Admin-Key`
+- requests to `/api/v1/admin/batch-delete` succeed with DB-only side effects
+- requests to `/api/v1/admin/reset` succeed with DB-only side effects
 - both endpoints continue to affect database rows only
 
 Frontend coverage:
@@ -130,7 +130,7 @@ Frontend coverage:
 
 This is intentionally a narrow behavior change:
 
-- remove the obsolete admin-key gate
+- remove the obsolete global maintenance gate
 - make destructive intent explicit in the UI through confirmations
 - add a small navigation improvement to homepage pagination
 

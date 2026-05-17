@@ -1,6 +1,5 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import type { ApiError } from './types';
-import { useAdminStore } from '../hooks/useAdmin';
 
 const isDevelopment = import.meta.env.MODE === 'development';
 
@@ -20,16 +19,6 @@ apiClient.interceptors.request.use(
       if (config.url === '/books' || config.url === '/books/' || 
           config.url === '/scan' || config.url === '/scan/') {
         config.url = config.url + '/';
-      }
-    }
-    
-    if (config.url?.startsWith('/admin')) {
-      const adminKey = useAdminStore.getState().adminKey;
-      const hasExplicitAdminKey =
-        config.headers.has('X-Admin-Key') || config.headers.has('x-admin-key');
-
-      if (adminKey && !hasExplicitAdminKey) {
-        config.headers.set('X-Admin-Key', adminKey);
       }
     }
     return config;

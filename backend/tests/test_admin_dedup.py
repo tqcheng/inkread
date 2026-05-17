@@ -7,9 +7,6 @@ from sqlalchemy import select
 from app.models import Book, ReadingProgress
 from app.services import dedup as dedup_service
 
-ADMIN_HEADERS = {"X-Admin-Key": "changeme"}
-
-
 @pytest.mark.asyncio
 async def test_dedup_summary_and_groups(async_client, db_session, tmp_path: Path):
     keep_file = tmp_path / "keep.txt"
@@ -37,8 +34,8 @@ async def test_dedup_summary_and_groups(async_client, db_session, tmp_path: Path
     )
     await db_session.commit()
 
-    summary = await async_client.get("/api/v1/admin/dedup/summary", headers=ADMIN_HEADERS)
-    groups = await async_client.get("/api/v1/admin/dedup/groups", headers=ADMIN_HEADERS)
+    summary = await async_client.get("/api/v1/admin/dedup/summary")
+    groups = await async_client.get("/api/v1/admin/dedup/groups")
 
     assert summary.status_code == 200
     assert summary.json()["duplicate_groups"] == 1
@@ -80,7 +77,6 @@ async def test_dedup_resolve_soft_delete_preserves_keep_book(
 
     response = await async_client.post(
         "/api/v1/admin/dedup/resolve",
-        headers=ADMIN_HEADERS,
         json={
             "content_md5": "abc",
             "keep_book_id": keep.id,
@@ -139,7 +135,6 @@ async def test_dedup_resolve_soft_delete_merges_richer_duplicate_metadata(
 
     response = await async_client.post(
         "/api/v1/admin/dedup/resolve",
-        headers=ADMIN_HEADERS,
         json={
             "content_md5": "metadata-merge",
             "keep_book_id": keep.id,
@@ -198,8 +193,8 @@ async def test_dedup_summary_and_groups_exclude_ignored_books(
     )
     await db_session.commit()
 
-    summary = await async_client.get("/api/v1/admin/dedup/summary", headers=ADMIN_HEADERS)
-    groups = await async_client.get("/api/v1/admin/dedup/groups", headers=ADMIN_HEADERS)
+    summary = await async_client.get("/api/v1/admin/dedup/summary")
+    groups = await async_client.get("/api/v1/admin/dedup/groups")
 
     assert summary.status_code == 200
     assert summary.json()["duplicate_groups"] == 1
@@ -291,8 +286,8 @@ async def test_dedup_summary_counts_ignored_duplicate_groups(
     )
     await db_session.commit()
 
-    summary = await async_client.get("/api/v1/admin/dedup/summary", headers=ADMIN_HEADERS)
-    groups = await async_client.get("/api/v1/admin/dedup/groups", headers=ADMIN_HEADERS)
+    summary = await async_client.get("/api/v1/admin/dedup/summary")
+    groups = await async_client.get("/api/v1/admin/dedup/groups")
 
     assert summary.status_code == 200
     assert summary.json()["duplicate_groups"] == 2
@@ -349,7 +344,6 @@ async def test_dedup_resolve_allows_non_ignored_rows_in_duplicate_group(
 
     response = await async_client.post(
         "/api/v1/admin/dedup/resolve",
-        headers=ADMIN_HEADERS,
         json={
             "content_md5": "row-ignore-resolve",
             "keep_book_id": keep.id,
@@ -399,7 +393,6 @@ async def test_dedup_resolve_hard_delete_requires_source_file_deletion(
 
     response = await async_client.post(
         "/api/v1/admin/dedup/resolve",
-        headers=ADMIN_HEADERS,
         json={
             "content_md5": "hard-delete-invalid",
             "keep_book_id": keep.id,
@@ -479,7 +472,6 @@ async def test_dedup_resolve_hard_delete_merges_device_progress_and_deletes_file
 
     response = await async_client.post(
         "/api/v1/admin/dedup/resolve",
-        headers=ADMIN_HEADERS,
         json={
             "content_md5": "hard-delete",
             "keep_book_id": keep.id,
@@ -565,7 +557,6 @@ async def test_dedup_resolve_returns_file_result_when_exists_check_fails(
 
     response = await async_client.post(
         "/api/v1/admin/dedup/resolve",
-        headers=ADMIN_HEADERS,
         json={
             "content_md5": "fs-error",
             "keep_book_id": keep.id,

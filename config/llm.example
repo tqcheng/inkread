@@ -1,5 +1,4 @@
 # Admin Key - CHANGE THIS IN PRODUCTION
-ADMIN_KEY=your_secure_admin_key_here
 
 # AI Provider (disabled, ollama, openai)
 AI_PROVIDER=disabled
