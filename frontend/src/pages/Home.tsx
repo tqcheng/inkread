@@ -41,10 +41,19 @@ export default function Home() {
   const { token, isEnabled, isLoading: authLoading, checkStatus } = useAuth();
 
   const toggleFavoriteMutation = useToggleFavoriteMutation();
+  const totalPages = Math.max(data?.pages ?? 1, 1);
+  const currentPage = Math.min(page, totalPages);
 
   useEffect(() => {
     checkStatus();
   }, [checkStatus]);
+
+  useEffect(() => {
+    if (!data || page === currentPage) {
+      return;
+    }
+    setPage(currentPage);
+  }, [currentPage, data, page]);
 
   const handleSearch = useCallback((query: string) => {
     setSearch(query);
@@ -89,6 +98,7 @@ export default function Home() {
       queryClient.invalidateQueries({ queryKey: ['books'] });
     } catch (error) {
       console.error('Batch delete failed:', error);
+      throw error;
     }
   }, [selectedBooks, actions, disableAdminMode, queryClient]);
 
@@ -154,6 +164,9 @@ export default function Home() {
               sortBy={sortBy}
               sortOrder={sortOrder}
               onSortChange={handleSortChange}
+              currentPage={currentPage}
+              totalPages={data?.pages ?? 1}
+              onPageChange={setPage}
             />
           </div>
         </div>
@@ -210,7 +223,7 @@ export default function Home() {
         {/* Pagination */}
         {data && data.pages > 1 && (
           <Pagination
-            currentPage={page}
+            currentPage={currentPage}
             totalPages={data.pages}
             onPageChange={setPage}
           />
