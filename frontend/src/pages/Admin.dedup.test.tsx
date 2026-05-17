@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import Admin from './Admin'
 import { adminApi } from '../api/admin'
 import { BOOKS_QUERY_KEY, BOOK_QUERY_KEY } from '../hooks/useBooks'
+import { useAdminStore } from '../hooks/useAdmin'
 
 const scanMocks = vi.hoisted(() => ({
   scanStatus: null as null | {
@@ -30,6 +31,7 @@ let queryClient: QueryClient
 
 vi.mock('../api/admin', () => ({
   adminApi: {
+    validateKey: vi.fn(),
     getOrphanedBooksCount: vi.fn(),
     getDedupSummary: vi.fn(),
     getDedupGroups: vi.fn(),
@@ -159,10 +161,16 @@ function deferred<T>() {
 describe('Admin duplicate management', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    useAdminStore.setState({
+      adminKey: 'server-secret',
+      isValidated: true,
+      isAdminMode: false,
+    })
     scanMocks.scanStatus = null
     scanMocks.triggerScan.isPending = false
     scanMocks.triggerScan.mutateAsync.mockResolvedValue({ task_id: 'scan-task-1' })
 
+    vi.mocked(adminApi.validateKey).mockResolvedValue(true)
     vi.mocked(adminApi.getOrphanedBooksCount).mockResolvedValue({ orphaned_books: 0 })
     vi.mocked(adminApi.getDedupSummary).mockResolvedValue(createDedupSummary())
     vi.mocked(adminApi.getDedupGroups).mockResolvedValue(createDedupGroups())

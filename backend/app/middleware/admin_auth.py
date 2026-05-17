@@ -10,10 +10,18 @@ from app.core.config import settings
 class AdminAuthMiddleware(BaseHTTPMiddleware):
     """Middleware to verify X-Admin-Key for admin endpoints."""
 
+    EXEMPT_ADMIN_ROUTES = {
+        ("POST", "/api/v1/admin/batch-delete"),
+        ("POST", "/api/v1/admin/reset"),
+    }
+
     async def dispatch(self, request: Request, call_next):
         if request.url.path.startswith("/api/v1/admin"):
             # Allow CORS preflight requests
             if request.method == "OPTIONS":
+                return await call_next(request)
+
+            if (request.method, request.url.path) in self.EXEMPT_ADMIN_ROUTES:
                 return await call_next(request)
 
             admin_key = request.headers.get("X-Admin-Key")

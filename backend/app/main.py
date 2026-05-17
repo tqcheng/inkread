@@ -49,6 +49,7 @@ def resolve_frontend_dist() -> Path | None:
 def create_app(frontend_dist: Path | None = None) -> FastAPI:
     app = FastAPI(title="TXT Reader API", lifespan=lifespan)
 
+    app.add_middleware(AdminAuthMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -63,8 +64,6 @@ def create_app(frontend_dist: Path | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    app.add_middleware(AdminAuthMiddleware)
 
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
     app.include_router(books.router, prefix="/api/v1/books", tags=["books"])

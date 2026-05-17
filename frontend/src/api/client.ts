@@ -25,7 +25,10 @@ apiClient.interceptors.request.use(
     
     if (config.url?.startsWith('/admin')) {
       const adminKey = useAdminStore.getState().adminKey;
-      if (adminKey) {
+      const hasExplicitAdminKey =
+        config.headers.has('X-Admin-Key') || config.headers.has('x-admin-key');
+
+      if (adminKey && !hasExplicitAdminKey) {
         config.headers.set('X-Admin-Key', adminKey);
       }
     }

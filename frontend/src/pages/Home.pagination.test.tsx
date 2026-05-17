@@ -21,6 +21,7 @@ const uiState = {
 
 const queryState = vi.hoisted(() => ({
   mode: 'stable' as 'stable' | 'shrunk',
+  resolvedShrunkPage: false,
 }))
 
 const renderState = vi.hoisted(() => ({
@@ -64,6 +65,31 @@ function makeResponse(page: number, pages: number): BookListResponse {
 const useBooksQueryMock = vi.fn((params: GetBooksParams = {}) => {
   const currentPage = params.page ?? 1
   const pages = queryState.mode === 'stable' ? 3 : 2
+
+  if (queryState.mode === 'shrunk') {
+    if (currentPage > pages) {
+      return {
+        data: {
+          items: [],
+          total: pages * 20,
+          page: currentPage,
+          page_size: 20,
+          pages,
+        },
+        isLoading: false,
+        error: null,
+      }
+    }
+
+    if (!queryState.resolvedShrunkPage) {
+      queryState.resolvedShrunkPage = true
+      return {
+        data: undefined,
+        isLoading: true,
+        error: null,
+      }
+    }
+  }
 
   return {
     data: makeResponse(currentPage, pages),
@@ -179,6 +205,7 @@ vi.mock('../components/LoginOverlay', () => ({
 describe('Home pagination sync', () => {
   it('clamps the current page when the result set shrinks and keeps header and footer in sync', async () => {
     queryState.mode = 'stable'
+    queryState.resolvedShrunkPage = false
     useBooksQueryMock.mockClear()
     renderState.sortSelectorProps = []
     renderState.paginationProps = []
@@ -207,18 +234,26 @@ describe('Home pagination sync', () => {
       </MemoryRouter>
     )
 
+    expect(screen.queryByText('暂无书籍')).not.toBeInTheDocument()
+    expect(screen.getByText('加载中...')).toBeInTheDocument()
     expect(screen.queryByText('3 / 2')).not.toBeInTheDocument()
-    expect(screen.getByLabelText('跳转到结果页')).toHaveValue('2')
-    expect(screen.getByText('2 / 2')).toBeInTheDocument()
     expect(renderState.sortSelectorProps).not.toContainEqual({ currentPage: 3, totalPages: 2 })
     expect(renderState.paginationProps).not.toContainEqual({ currentPage: 3, totalPages: 2 })
-    expect(renderState.sortSelectorProps.every((props) => props.currentPage === 2 && props.totalPages === 2)).toBe(true)
-    expect(renderState.paginationProps.every((props) => props.currentPage === 2 && props.totalPages === 2)).toBe(true)
+
+    rerender(
+      <MemoryRouter>
+        <Home />
+      </MemoryRouter>
+    )
 
     await waitFor(() => {
       expect(screen.getByLabelText('跳转到结果页')).toHaveValue('2')
     })
     expect(screen.getByText('2 / 2')).toBeInTheDocument()
+    expect(screen.getByText('Book 2')).toBeInTheDocument()
+    expect(screen.queryByText('暂无书籍')).not.toBeInTheDocument()
+    expect(renderState.sortSelectorProps).toContainEqual({ currentPage: 2, totalPages: 2 })
+    expect(renderState.paginationProps).toContainEqual({ currentPage: 2, totalPages: 2 })
 
     expect(useBooksQueryMock).toHaveBeenCalledWith(expect.objectContaining({ page: 3 }))
     expect(useBooksQueryMock).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2 }))

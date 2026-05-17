@@ -26,9 +26,11 @@ export const adminApi = {
     return response.data;
   },
 
-  validateKey: async (): Promise<boolean> => {
+  validateKey: async (adminKey?: string): Promise<boolean> => {
     try {
-      await apiClient.get('/admin/validate');
+      await apiClient.get('/admin/validate', {
+        headers: adminKey ? { 'X-Admin-Key': adminKey } : undefined,
+      });
       return true;
     } catch {
       return false;

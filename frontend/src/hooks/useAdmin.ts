@@ -5,6 +5,8 @@ interface AdminState {
   isValidated: boolean;
   adminKey: string | null;
   validateKey: (key: string, expectedKey: string) => boolean;
+  setAdminKey: (key: string) => void;
+  clearAdminKey: () => void;
   enableAdminMode: () => void;
   disableAdminMode: () => void;
   getAdminKey: () => string | null;
@@ -21,6 +23,21 @@ export const useAdminStore = create<AdminState>()((set, get) => ({
       return true;
     }
     return false;
+  },
+
+  setAdminKey: (key: string) => {
+    set({
+      adminKey: key,
+      isValidated: true,
+    });
+  },
+
+  clearAdminKey: () => {
+    set({
+      adminKey: null,
+      isValidated: false,
+      isAdminMode: false,
+    });
   },
 
   enableAdminMode: () => {
@@ -42,9 +59,12 @@ export const useAdminActions = () => {
   const store = useAdminStore();
   return {
     validateKey: store.validateKey,
+    setAdminKey: store.setAdminKey,
+    clearAdminKey: store.clearAdminKey,
     enableAdminMode: store.enableAdminMode,
     disableAdminMode: store.disableAdminMode,
     getAdminKey: store.getAdminKey,
+    adminKey: store.adminKey,
     isAdminMode: store.isAdminMode,
     isValidated: store.isValidated,
   };

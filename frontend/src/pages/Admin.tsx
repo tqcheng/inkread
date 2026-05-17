@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { FolderSearch, RefreshCw, CheckCircle, XCircle, Clock, Loader2, Database, AlertTriangle, Trash2 } from 'lucide-react';
 import { useScanSummary, useScanStatus, useTriggerScanMutation } from '../hooks/useScan';
@@ -9,7 +9,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { BOOKS_QUERY_KEY, BOOK_QUERY_KEY } from '../hooks/useBooks';
 import SecuritySettingsSection from '../components/SecuritySettingsSection';
 
-const ADMIN_KEY = 'changeme';
+const EMPTY_DEDUP_SUMMARY: DedupSummaryResponse = {
+  duplicate_groups: 0,
+  duplicate_books: 0,
+  ignored_groups: 0,
+};
 
 export default function Admin() {
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
@@ -17,12 +21,13 @@ export default function Admin() {
   const { data: currentStatus, isLoading: isStatusLoading } = useScanStatus(currentTaskId);
   const triggerScan = useTriggerScanMutation();
   const queryClient = useQueryClient();
-  const validateKey = useAdminStore(state => state.validateKey);
+  const adminKey = useAdminStore(state => state.adminKey);
+  const setAdminKey = useAdminStore(state => state.setAdminKey);
+  const clearAdminKey = useAdminStore(state => state.clearAdminKey);
 
   // Database maintenance state
   const [orphanedCount, setOrphanedCount] = useState<number | null>(null);
   const [showResetDialog, setShowResetDialog] = useState(false);
-  const [resetPassword, setResetPassword] = useState('');
   const [resetError, setResetError] = useState('');
   const [resetting, setResetting] = useState(false);
   const [cleaning, setCleaning] = useState(false);
@@ -35,8 +40,27 @@ export default function Admin() {
   const [isDedupLoading, setIsDedupLoading] = useState(true);
   const [dedupError, setDedupError] = useState<string | null>(null);
   const [dedupResolveWarning, setDedupResolveWarning] = useState<string | null>(null);
+  const [adminKeyInput, setAdminKeyInput] = useState('');
+  const [adminKeyError, setAdminKeyError] = useState<string | null>(null);
+  const [isAdminKeySaving, setIsAdminKeySaving] = useState(false);
+  const maintenanceEpochRef = useRef(0);
+  const hasProtectedAdminKey = Boolean(adminKey);
+
+  const clearProtectedMaintenanceState = useCallback((orphanedValue: number | null) => {
+    setOrphanedCount(orphanedValue);
+    setCleanResult('');
+    setDedupSummary(orphanedValue === 0 ? EMPTY_DEDUP_SUMMARY : null);
+    setDedupGroups([]);
+    setExpandedGroups({});
+    setSelectedKeepByHash({});
+    setDeleteSourceFilesByHash({});
+    setDedupError(null);
+    setDedupResolveWarning(null);
+    setIsDedupLoading(false);
+  }, []);
 
   const loadDedupData = async () => {
+    const requestEpoch = maintenanceEpochRef.current;
     setIsDedupLoading(true);
     setDedupError(null);
     setDedupResolveWarning(null);
@@ -46,6 +70,10 @@ export default function Admin() {
         adminApi.getDedupSummary(),
         adminApi.getDedupGroups(),
       ]);
+
+      if (requestEpoch !== maintenanceEpochRef.current) {
+        return;
+      }
 
       setDedupSummary(summaryData);
       setDedupGroups(groupsData.items);
@@ -64,34 +92,100 @@ export default function Admin() {
         return next;
       });
     } catch {
+      if (requestEpoch !== maintenanceEpochRef.current) {
+        return;
+      }
+
       setDedupSummary(null);
       setDedupGroups([]);
       setDedupError('重复书籍加载失败，请稍后重试');
     } finally {
-      setIsDedupLoading(false);
+      if (requestEpoch === maintenanceEpochRef.current) {
+        setIsDedupLoading(false);
+      }
     }
   };
 
-  // Validate admin key and fetch orphaned books count
   useEffect(() => {
-    validateKey(ADMIN_KEY, ADMIN_KEY);
+    setAdminKeyInput(adminKey ?? '');
+  }, [adminKey]);
+
+  const handleAdminKeySave = async () => {
+    const trimmedKey = adminKeyInput.trim();
+
+    if (!trimmedKey) {
+      setAdminKeyError('请输入管理员密钥');
+      return;
+    }
+
+    setIsAdminKeySaving(true);
+    setAdminKeyError(null);
+
+    try {
+      const isValid = await adminApi.validateKey(trimmedKey);
+      if (!isValid) {
+        throw new Error('管理员密钥无效');
+      }
+
+      maintenanceEpochRef.current += 1;
+      setAdminKey(trimmedKey);
+      clearProtectedMaintenanceState(null);
+    } catch (error: any) {
+      clearAdminKey();
+      setAdminKeyError(error?.message || '管理员密钥无效');
+    } finally {
+      setIsAdminKeySaving(false);
+    }
+  };
+
+  const handleAdminKeyClear = () => {
+    maintenanceEpochRef.current += 1;
+    clearAdminKey();
+    setAdminKeyInput('');
+    setAdminKeyError(null);
+    clearProtectedMaintenanceState(null);
+  };
+
+  useEffect(() => {
+    if (!hasProtectedAdminKey) {
+      maintenanceEpochRef.current += 1;
+      clearProtectedMaintenanceState(null);
+      return;
+    }
+
+    const requestEpoch = maintenanceEpochRef.current;
     adminApi.getOrphanedBooksCount().then(data => {
+      if (requestEpoch !== maintenanceEpochRef.current) {
+        return;
+      }
+
       setOrphanedCount(data.orphaned_books);
     }).catch(() => {});
     loadDedupData().catch(() => {});
-  }, [validateKey]);
+  }, [clearProtectedMaintenanceState, hasProtectedAdminKey]);
 
   const handleCleanup = async () => {
+    const requestEpoch = maintenanceEpochRef.current;
     setCleaning(true);
     setCleanResult('');
     try {
       const result = await adminApi.cleanupOrphanedBooks();
+      if (requestEpoch !== maintenanceEpochRef.current) {
+        return;
+      }
+
       setCleanResult(`已删除 ${result.deleted} 本孤立书籍`);
       setOrphanedCount(0);
     } catch {
+      if (requestEpoch !== maintenanceEpochRef.current) {
+        return;
+      }
+
       setCleanResult('清理失败');
     } finally {
-      setCleaning(false);
+      if (requestEpoch === maintenanceEpochRef.current) {
+        setCleaning(false);
+      }
     }
   };
 
@@ -100,8 +194,9 @@ export default function Admin() {
     setResetError('');
     try {
       await adminApi.resetDatabase();
+      maintenanceEpochRef.current += 1;
+      clearProtectedMaintenanceState(0);
       setShowResetDialog(false);
-      setResetPassword('');
       queryClient.invalidateQueries();
     } catch (err: any) {
       setResetError(err?.message || '重置失败');
@@ -120,6 +215,7 @@ export default function Admin() {
   };
 
   const handleResolveGroup = async (group: DedupGroup, mode: 'soft_delete' | 'hard_delete') => {
+    const requestEpoch = maintenanceEpochRef.current;
     const selectedKeepBookId = selectedKeepByHash[group.content_md5];
     const deleteSourceFilesEnabled = deleteSourceFilesByHash[group.content_md5] ?? false;
 
@@ -163,11 +259,19 @@ export default function Admin() {
       ? `部分原始文件未删除（${failedSourceFiles.length} 个），可能会在后续扫描中重新出现。`
       : null;
 
+    if (requestEpoch !== maintenanceEpochRef.current) {
+      return;
+    }
+
     await Promise.all([
       loadDedupData(),
       queryClient.invalidateQueries({ queryKey: BOOKS_QUERY_KEY }),
       queryClient.invalidateQueries({ queryKey: [BOOK_QUERY_KEY] }),
     ]);
+
+    if (requestEpoch !== maintenanceEpochRef.current) {
+      return;
+    }
 
     setDedupResolveWarning(resolveWarning);
   };
@@ -242,6 +346,52 @@ export default function Admin() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6">
+        <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-800">🔐 管理员密钥</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                重复书籍、孤立书籍清理和安全设置等受保护功能需要管理员密钥。批量删除与重置数据库不需要。
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                type="password"
+                value={adminKeyInput}
+                onChange={(event) => setAdminKeyInput(event.target.value)}
+                placeholder="输入管理员密钥"
+                className="px-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                onClick={handleAdminKeySave}
+                disabled={isAdminKeySaving}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  isAdminKeySaving
+                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    : 'bg-blue-500 text-white hover:bg-blue-600'
+                }`}
+              >
+                {isAdminKeySaving ? '验证中...' : '验证并保存'}
+              </button>
+              {hasProtectedAdminKey && (
+                <button
+                  onClick={handleAdminKeyClear}
+                  className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
+                >
+                  清除
+                </button>
+              )}
+            </div>
+          </div>
+          {adminKeyError ? (
+            <div className="mt-3 text-sm text-red-600">{adminKeyError}</div>
+          ) : hasProtectedAdminKey ? (
+            <div className="mt-3 text-sm text-green-600">管理员密钥已验证，可使用受保护功能。</div>
+          ) : (
+            <div className="mt-3 text-sm text-gray-500">当前未保存管理员密钥，受保护功能将保持只读或不可用。</div>
+          )}
+        </section>
+
         {/* Scan Section */}
         <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
           <div className="flex items-center justify-between mb-4">
@@ -379,7 +529,9 @@ export default function Admin() {
 
         <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">重复书籍</h2>
-          {isDedupLoading ? (
+          {!hasProtectedAdminKey ? (
+            <div className="text-sm text-gray-500">输入并验证管理员密钥后可使用重复书籍管理。</div>
+          ) : isDedupLoading ? (
             <div className="text-sm text-gray-500" role="status">重复书籍加载中...</div>
           ) : dedupError ? (
             <div className="text-sm text-red-600" role="alert">{dedupError}</div>
@@ -509,7 +661,16 @@ export default function Admin() {
         </section>
 
         {/* Security Settings Section */}
-        <SecuritySettingsSection />
+        {hasProtectedAdminKey ? (
+          <SecuritySettingsSection />
+        ) : (
+          <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-2">🔒 安全设置</h2>
+            <p className="text-sm text-gray-500">
+              输入并验证管理员密钥后可修改安全设置。
+            </p>
+          </section>
+        )}
 
         {/* Database Maintenance Section */}
         <section className="bg-white rounded-xl shadow-sm p-6 mb-6">
@@ -528,14 +689,18 @@ export default function Admin() {
                     <span className="font-medium text-gray-800">清理孤立书籍</span>
                   </div>
                   <p className="text-sm text-gray-500 mt-1">
-                    {orphanedCount === null ? '检测中...' : `检测到 ${orphanedCount} 本书籍文件已不存在`}
+                    {!hasProtectedAdminKey
+                      ? '输入并验证管理员密钥后可使用该功能'
+                      : orphanedCount === null
+                      ? '检测中...'
+                      : `检测到 ${orphanedCount} 本书籍文件已不存在`}
                   </p>
                 </div>
                 <button
                   onClick={handleCleanup}
-                  disabled={cleaning || orphanedCount === 0 || orphanedCount === null}
+                  disabled={!hasProtectedAdminKey || cleaning || orphanedCount === 0 || orphanedCount === null}
                   className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                    cleaning || orphanedCount === 0 || orphanedCount === null
+                    !hasProtectedAdminKey || cleaning || orphanedCount === 0 || orphanedCount === null
                       ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       : 'bg-orange-500 text-white hover:bg-orange-600'
                   }`}
@@ -557,11 +722,14 @@ export default function Admin() {
                     <span className="font-medium text-red-700">重置数据库（危险操作）</span>
                   </div>
                   <p className="text-sm text-red-600 mt-1">
-                    将删除所有书籍和设置
+                    将删除所有数据库记录和设置，不会删除原始源文件
                   </p>
                 </div>
                 <button
-                  onClick={() => setShowResetDialog(true)}
+                  onClick={() => {
+                    setResetError('');
+                    setShowResetDialog(true);
+                  }}
                   className="px-4 py-2 rounded-lg font-medium bg-red-500 text-white hover:bg-red-600 transition-colors"
                 >
                   重置数据库
@@ -575,15 +743,10 @@ export default function Admin() {
         {showResetDialog && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">输入管理员密码确认重置</h3>
-              <input
-                type="password"
-                value={resetPassword}
-                onChange={(e) => setResetPassword(e.target.value)}
-                placeholder="输入 ADMIN_KEY"
-                className="w-full px-4 py-2 border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-red-500"
-                onKeyDown={(e) => e.key === 'Enter' && handleReset()}
-              />
+              <h3 className="text-lg font-semibold text-gray-800 mb-2">确认重置数据库？</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                此操作只会删除数据库记录和设置，不会删除原始源文件。
+              </p>
               {resetError && (
                 <div className="text-red-500 text-sm mb-4">{resetError}</div>
               )}
@@ -591,7 +754,6 @@ export default function Admin() {
                 <button
                   onClick={() => {
                     setShowResetDialog(false);
-                    setResetPassword('');
                     setResetError('');
                   }}
                   className="px-4 py-2 rounded-lg font-medium bg-gray-100 text-gray-600 hover:bg-gray-200"
@@ -600,9 +762,9 @@ export default function Admin() {
                 </button>
                 <button
                   onClick={handleReset}
-                  disabled={resetting || !resetPassword}
+                  disabled={resetting}
                   className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                    resetting || !resetPassword
+                    resetting
                       ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       : 'bg-red-500 text-white hover:bg-red-600'
                   }`}

@@ -1,46 +1,34 @@
 import { Trash2 } from 'lucide-react';
 import { useState } from 'react';
-import { useAdminActions } from '../hooks/useAdmin';
 
 interface AdminBarProps {
   selectedCount: number;
   onClearSelection: () => void;
-  onBatchDelete: () => void;
-  expectedAdminKey: string;
+  onBatchDelete: () => Promise<void> | void;
 }
 
 export default function AdminBar({
   selectedCount,
   onClearSelection,
   onBatchDelete,
-  expectedAdminKey,
 }: AdminBarProps) {
-  const [adminKey, setAdminKey] = useState('');
-  const [showInput, setShowInput] = useState(false);
-  const [error, setError] = useState('');
+  const [showConfirm, setShowConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const { validateKey } = useAdminActions();
 
   const handleDelete = async () => {
-    if (validateKey(adminKey, expectedAdminKey)) {
-      setIsDeleting(true);
-      try {
-        onBatchDelete();
-        setAdminKey('');
-        setShowInput(false);
-        setError('');
-      } finally {
-        setIsDeleting(false);
-      }
-    } else {
-      setError('密钥错误');
+    setIsDeleting(true);
+    try {
+      await onBatchDelete();
+      setShowConfirm(false);
+    } catch (error) {
+      console.error('Batch delete failed:', error);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
   const handleCancel = () => {
-    setShowInput(false);
-    setAdminKey('');
-    setError('');
+    setShowConfirm(false);
   };
 
   if (selectedCount === 0) return null;
@@ -55,15 +43,12 @@ export default function AdminBar({
         >
           取消选择
         </button>
-        {showInput ? (
-          <div className="flex items-center gap-2">
-            <input
-              type="password"
-              placeholder="输入 ADMIN_KEY"
-              value={adminKey}
-              onChange={(e) => setAdminKey(e.target.value)}
-              className="px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm focus:outline-none focus:border-blue-500"
-            />
+        {showConfirm ? (
+          <div className="flex items-center gap-3">
+            <div className="text-sm">
+              <div className="font-medium">确认删除选中的书籍记录？</div>
+              <div className="text-gray-300">此操作只会删除数据库记录，不会删除原始源文件。</div>
+            </div>
             <button
               onClick={handleDelete}
               disabled={isDeleting}
@@ -80,14 +65,13 @@ export default function AdminBar({
           </div>
         ) : (
           <button
-            onClick={() => setShowInput(true)}
+            onClick={() => setShowConfirm(true)}
             className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm transition-colors flex items-center gap-2"
           >
             <Trash2 className="w-4 h-4" />
             批量删除
           </button>
         )}
-        {error && <span className="text-red-400 text-sm">{error}</span>}
       </div>
     </div>
   );

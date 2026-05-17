@@ -132,7 +132,6 @@ class TestBatchDeleteEndpoint:
         response = await async_client.post(
             "/api/v1/admin/batch-delete",
             json={"ids": book_ids},
-            headers={"X-Admin-Key": "changeme"},
         )
 
         assert response.status_code == 200

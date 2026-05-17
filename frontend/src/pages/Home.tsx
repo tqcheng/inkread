@@ -43,6 +43,7 @@ export default function Home() {
   const toggleFavoriteMutation = useToggleFavoriteMutation();
   const totalPages = Math.max(data?.pages ?? 1, 1);
   const currentPage = Math.min(page, totalPages);
+  const isPageClampPending = Boolean(data && page > totalPages && data.items.length === 0);
 
   useEffect(() => {
     checkStatus();
@@ -174,7 +175,7 @@ export default function Home() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-6">
-        {isLoading ? (
+        {isLoading || isPageClampPending ? (
           <div className="flex items-center justify-center h-64">
             <div className="text-gray-500">加载中...</div>
           </div>
@@ -235,7 +236,6 @@ export default function Home() {
         selectedCount={selectedBooks.size}
         onClearSelection={actions.clearSelection}
         onBatchDelete={handleBatchDelete}
-        expectedAdminKey="changeme"
       />
     </div>
   );
